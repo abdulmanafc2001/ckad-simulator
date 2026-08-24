@@ -258,6 +258,54 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
+/* Flagged questions get an amber marker, like killer.sh's review flag. */
+.q-dot.flagged {
+  border-color: var(--warn, #d97706);
+  color: var(--warn, #d97706);
+  background: color-mix(in srgb, #d97706 12%, transparent);
+}
+.q-dot.flagged::after {
+  content: '⚑';
+  position: absolute;
+  top: -0.35rem;
+  right: -0.3rem;
+  font-size: 0.7rem;
+}
+.q-dot {
+  position: relative;
+}
+
+/* Dropdown question navigator (killer.sh style) */
+.q-select {
+  max-width: 340px;
+  flex: 1;
+  min-width: 200px;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  color: var(--text-h);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.q-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-flag {
+  align-self: flex-start;
+  margin-top: 0.5rem;
+  border-color: color-mix(in srgb, #d97706 55%, var(--border));
+  color: var(--warn, #d97706);
+}
+.btn-flag:hover {
+  border-color: var(--warn, #d97706);
+}
+.btn-flag.is-flagged {
+  background: color-mix(in srgb, #d97706 14%, transparent);
+  font-weight: 600;
+}
 
 .q-panel {
   border: 1px solid var(--border);

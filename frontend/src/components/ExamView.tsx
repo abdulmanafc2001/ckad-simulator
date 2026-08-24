@@ -21,6 +21,7 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
   const [index, setIndex] = useState(0)
   const [hintsShown, setHintsShown] = useState<Record<string, number>>({})
   const [submissions, setSubmissions] = useState<Record<string, SubmitAnswerResponse>>({})
+  const [flagged, setFlagged] = useState<Record<string, boolean>>({})
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -79,6 +80,21 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
     return submissions[qid] ? 'done' : 'unanswered'
   }
 
+  const isFlagged = Boolean(flagged[question.id])
+  const flaggedCount = Object.values(flagged).filter(Boolean).length
+
+  function toggleFlag() {
+    setFlagged((prev) => ({ ...prev, [question.id]: !prev[question.id] }))
+  }
+
+  // killer.sh-style label for the dropdown: number, flag, done state.
+  function optionLabel(q: Question, i: number): string {
+    const parts = [`${i + 1}. ${q.title}`]
+    if (submissions[q.id]) parts.push('✓')
+    if (flagged[q.id]) parts.push('⚑')
+    return parts.join(' ')
+  }
+
   return (
     <div className="exam">
       <div className="exam-topbar">
@@ -88,8 +104,21 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
           </div>
           <span className="muted">
             {answeredCount}/{questions.length} answered
+            {flaggedCount > 0 && ` · ⚑ ${flaggedCount} flagged`}
           </span>
         </div>
+        <select
+          className="q-select"
+          value={index}
+          onChange={(e) => setIndex(Number(e.target.value))}
+          aria-label="Jump to question"
+        >
+          {questions.map((q, i) => (
+            <option key={q.id} value={i}>
+              {optionLabel(q, i)}
+            </option>
+          ))}
+        </select>
         <div className="exam-meta">
           <Timer
             startedAt={session.startedAt}
@@ -107,9 +136,11 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
           {questions.map((q, i) => (
             <button
               key={q.id}
-              className={`q-dot ${i === index ? 'active' : ''} ${statusOf(q.id)}`}
+              className={`q-dot ${i === index ? 'active' : ''} ${statusOf(q.id)} ${
+                flagged[q.id] ? 'flagged' : ''
+              }`}
               onClick={() => setIndex(i)}
-              title={q.title}
+              title={optionLabel(q, i)}
             >
               {i + 1}
             </button>
@@ -128,6 +159,13 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
               Question {index + 1}. {question.title}
             </h3>
             <p className="muted">{question.description}</p>
+            <button
+              className={`btn btn-flag ${isFlagged ? 'is-flagged' : ''}`}
+              onClick={toggleFlag}
+              title="Flag this question to review it later"
+            >
+              {isFlagged ? '⚑ Flagged for review' : '⚐ Flag for review'}
+            </button>
           </header>
 
           <section className="q-task">

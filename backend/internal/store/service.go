@@ -6,10 +6,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/checker"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/dto"
+	"github.com/google/uuid"
 )
 
 // Exam constants matching the real CKAD exam rules.
@@ -168,7 +168,8 @@ func (s *Service) GetSession(id string) (*models.Session, error) {
 }
 
 // examSize is the number of questions in a default exam session.
-const examSize = 10
+// The real CKAD exam has 17 tasks in 2 hours.
+const examSize = 17
 
 // domainWeights mirror the official CKAD curriculum weighting so generated
 // exams feel like the real thing.

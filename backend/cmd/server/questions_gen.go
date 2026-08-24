@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/manaf/ckad-simulator/backend/internal/models"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 )
 
 // This file programmatically generates the bulk of the CKAD question bank.

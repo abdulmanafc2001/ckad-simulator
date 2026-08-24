@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/manaf/ckad-simulator/backend/internal/models"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 )
 
 // Bulk expansion pack #2 (~254 questions): UDP ports, hostPath, init

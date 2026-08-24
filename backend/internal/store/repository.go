@@ -2,7 +2,7 @@
 // application service (Service) used by the HTTP handlers.
 package store
 
-import "github.com/manaf/ckad-simulator/backend/internal/models"
+import "github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 
 // Repository abstracts persistence so the in-memory store can later be
 // swapped for a real database without touching the service layer.

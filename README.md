@@ -47,15 +47,18 @@ graph LR
 
 ## 🚀 Quickstart
 
-Prerequisites: **Go 1.26+**, **Node 20+**, a Kubernetes cluster (`minikube start`)
-and `kubectl` pointed at it.
+**Requirements:** [Go 1.26+](https://go.dev/dl/), [Node.js 20+](https://nodejs.org),
+[minikube](https://minikube.sigs.k8s.io/docs/start/) and `kubectl`.
 
 ```bash
-# Terminal 1 — backend
-cd backend && go run ./cmd/server        # http://localhost:8080
+# 1. Start a local Kubernetes cluster
+minikube start
 
-# Terminal 2 — frontend
-cd frontend && npm install && npm run dev # http://localhost:5173
+# 2. Backend (terminal 1)
+cd backend && go run ./cmd/server          # http://localhost:8080
+
+# 3. Frontend (terminal 2)
+cd frontend && npm install && npm run dev  # http://localhost:5173
 ```
 
 Open <http://localhost:5173>, hit **Start a 2-hour exam session**, and good luck! 🍀
@@ -74,23 +77,6 @@ secrets, probes, resource management, RBAC/service accounts, quotas, services,
 ingress, network policies, scheduling (affinity/taints), security contexts,
 StatefulSets/DaemonSets, HPA, rollout strategies, the ambassador pattern and more.
 
-## ☁️ Deployment
-
-The [`deploy/`](deploy/) folder ships a complete cloud kit: multi-stage
-Dockerfiles (backend bundles `kubectl`), nginx SPA proxy, kustomize manifests
-with RBAC, and scripts. Verified end-to-end on minikube; guides included for
-free tiers (Oracle Always-Free + k3s, OKE, Civo) and managed clouds
-(GKE/AKS/EKS).
-
-```bash
-./deploy/build.sh
-minikube image load ghcr.io/manaf/ckad-backend:local ghcr.io/manaf/ckad-frontend:local
-./deploy/deploy.sh minikube
-```
-
-> ⚠️ **Security**: candidates get broad cluster access by design. Put
-> authentication in front of any public deployment (see deploy/README.md).
-
 ## 🏗️ Architecture
 
 | Piece | Tech | Notes |
@@ -106,9 +92,8 @@ Issues and PRs are welcome! Good first contributions:
 
 - New question families (follow the generator pattern in `backend/cmd/server/questions_gen*.go`)
 - A persistent session store
-- Auth options for public deployments
 - More locales / UI polish
 
 ## 📄 License
 
-[MIT](LICENSE) © abdulmanafc2001
+[MIT](LICENSE)

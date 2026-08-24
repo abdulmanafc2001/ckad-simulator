@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manaf/ckad-simulator/backend/internal/models"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 )
 
 const (

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/manaf/ckad-simulator/backend/internal/models"
+import "github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 
 // seedQuestions returns the full CKAD question bank: the hand-written
 // originals plus the programmatically generated families (questions_gen.go).

@@ -10,8 +10,8 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
-	"github.com/manaf/ckad-simulator/backend/internal/handler"
-	"github.com/manaf/ckad-simulator/backend/internal/store"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/handler"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store"
 )
 
 // New builds a fully configured Gin engine backed by the given service.

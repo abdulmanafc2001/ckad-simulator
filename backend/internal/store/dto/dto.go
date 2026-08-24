@@ -5,7 +5,7 @@ package dto
 import (
 	"time"
 
-	"github.com/manaf/ckad-simulator/backend/internal/models"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 )
 
 // QuestionSummary is a question without hints/solution, used when listing.

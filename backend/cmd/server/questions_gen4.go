@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/manaf/ckad-simulator/backend/internal/models"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 )
 
 // This file adds harder, exam-realistic questions: scheduling constraints,

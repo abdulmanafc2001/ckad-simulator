@@ -8,9 +8,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/manaf/ckad-simulator/backend/internal/store"
-	"github.com/manaf/ckad-simulator/backend/internal/store/dto"
-	"github.com/manaf/ckad-simulator/backend/internal/store/memory"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/dto"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/memory"
 )
 
 // Handler wraps the application service and exposes HTTP methods.

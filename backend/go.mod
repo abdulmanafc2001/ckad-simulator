@@ -1,4 +1,4 @@
-module github.com/manaf/ckad-simulator/backend
+module github.com/abdulmanafc2001/ckad-simulator/backend
 
 go 1.26.3
 

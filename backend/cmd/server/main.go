@@ -4,10 +4,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/manaf/ckad-simulator/backend/internal/checker"
-	"github.com/manaf/ckad-simulator/backend/internal/router"
-	"github.com/manaf/ckad-simulator/backend/internal/store"
-	"github.com/manaf/ckad-simulator/backend/internal/store/memory"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/checker"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/router"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/memory"
 )
 
 func main() {

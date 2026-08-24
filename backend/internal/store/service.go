@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/manaf/ckad-simulator/backend/internal/checker"
-	"github.com/manaf/ckad-simulator/backend/internal/models"
-	"github.com/manaf/ckad-simulator/backend/internal/store/dto"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/checker"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/dto"
 )
 
 // Exam constants matching the real CKAD exam rules.

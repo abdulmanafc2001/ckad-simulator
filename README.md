@@ -4,7 +4,7 @@
 
 **A free, open-source practice simulator for the Certified Kubernetes Application Developer (CKAD) exam**
 
-[![Questions](https://img.shields.io/badge/questions-695-blue)](#question-bank)
+[![Questions](https://img.shields.io/badge/questions-1013-blue)](#question-bank)
 [![Domains](https://img.shields.io/badge/domains-5-green)](#question-bank)
 [![License: MIT](https://img.shields.io/badge/license-MIT-purple)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -41,7 +41,7 @@ graph LR
 - 🧪 **Self-contained tasks** — each question creates & cleans up its own namespace
 - ⏱️ **Exam mode** — 2-hour timer, domain-weighted random selection,
   results hidden until you submit (just like the real thing)
-- 📚 **695 questions** across all five CKAD domains and three difficulty levels
+- 📚 **1013 questions** across all five CKAD domains and three difficulty levels
 - 🔍 **Review mode** — after the exam, see exactly which checks failed and why,
   with reference solutions
 
@@ -68,9 +68,9 @@ Open <http://localhost:5173>, hit **Start a 2-hour exam session**, and good luck
 | Difficulty | Count |
 |-----------:|------:|
 | Easy       | 150   |
-| Medium     | 249   |
-| Hard       | 296   |
-| **Total**  | **695** |
+| Medium     | 257   |
+| Hard       | 606   |
+| **Total**  | **1013** |
 
 Coverage spans every CKAD domain — pods, deployments, jobs/cronjobs, config &
 secrets, probes, resource management, RBAC/service accounts, quotas, services,

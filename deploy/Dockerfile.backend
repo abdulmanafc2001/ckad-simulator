@@ -1,0 +1,23 @@
+# ---- Stage 1: build the Go binary -------------------------------------
+FROM golang:1.26-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
+
+# ---- Stage 2: runtime with kubectl ------------------------------------
+FROM alpine:3.20
+ARG TARGETARCH=amd64
+RUN apk add --no-cache ca-certificates curl \
+ && addgroup -g 10001 app && adduser -D -u 10001 -G app appuser \
+ && curl -fsSL -o /usr/local/bin/kubectl \
+      "https://dl.k8s.io/release/v1.30.14/bin/linux/${TARGETARCH}/kubectl" \
+ && chmod +x /usr/local/bin/kubectl
+COPY --from=build /out/server /usr/local/bin/server
+# writable sandbox for the exam terminal's fake HOME
+RUN mkdir -p /tmp/ckad-simulator && chown -R appuser:app /tmp/ckad-simulator
+USER appuser
+EXPOSE 8080
+HEALTHCHECK --interval=15s --timeout=3s CMD curl -sf http://localhost:8080/healthz || exit 1
+ENTRYPOINT ["/usr/local/bin/server"]

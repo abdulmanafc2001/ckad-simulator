@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ckad-simulator
+  labels:
+    app: ckad-frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ckad-frontend
+  template:
+    metadata:
+      labels:
+        app: ckad-frontend
+    spec:
+      containers:
+        - name: nginx
+          image: ghcr.io/manaf/ckad-frontend:local   # overridden by kustomization
+          ports:
+            - containerPort: 80
+          readinessProbe:
+            httpGet: { path: /, port: 80 }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: ckad-simulator
+spec:
+  type: NodePort          # works on minikube / k3s VMs; switch to ClusterIP + Ingress on managed clouds
+  selector:
+    app: ckad-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080

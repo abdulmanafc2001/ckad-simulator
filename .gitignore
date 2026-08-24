@@ -1,0 +1,27 @@
+# Go
+backend/server
+*.exe
+*.test
+*.out
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+*.local
+
+# Logs & temp
+*.log
+/tmp/
+nohup.out
+
+# Editor & OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local env / secrets — never commit these
+.env
+.env.*
+*.kubeconfig

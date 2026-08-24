@@ -1,0 +1,25 @@
+# Production-like local test WITHOUT a cluster: containers talk to your
+# host's minikube via the mounted kubeconfig.
+#   cd /path/to/ckad-simulator && docker compose -f deploy/docker-compose.yml up --build
+#   open http://localhost:8082
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    environment:
+      # in-cluster discovery is skipped; kubectl uses this file instead
+      KUBECONFIG: /kube/config
+    volumes:
+      - ${HOME}/.kube:/kube:ro
+    ports:
+      - "8081:8080"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+    depends_on:
+      - backend
+    ports:
+      - "8082:80"

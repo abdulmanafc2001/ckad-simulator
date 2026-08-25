@@ -5,6 +5,7 @@ package router
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -19,10 +20,15 @@ func New(svc *store.Service) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	// Permissive CORS suitable for local development. Tighten AllowOrigins
-	// for production deployments.
+	// Permissive CORS suitable for local development. Any loopback origin
+	// (any port) is allowed so Vite picking a different free port (5174,
+	// ...) doesn't break POSTs — browsers send Origin on POST even when
+	// same-origin through the dev proxy. Tighten for production.
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowOriginFunc: func(origin string) bool {
+			return strings.HasPrefix(origin, "http://localhost:") ||
+				strings.HasPrefix(origin, "http://127.0.0.1:")
+		},
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},

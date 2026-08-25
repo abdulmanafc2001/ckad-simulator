@@ -28,6 +28,32 @@ export interface EditorOptions {
 
 const CSI = '\x1b['
 
+const ESC_SEQ_RE = /^\x1b(?:\[[0-9;]*[A-Za-z~]|O[A-Za-z])/
+
+/**
+ * Splits a raw input chunk into single keystrokes or complete escape
+ * sequences. xterm.js can coalesce rapid keypresses (e.g. "\x1b[A\x1b[A")
+ * into a single onData event; tokenizing keeps arrow keys and editor
+ * commands working no matter how the bytes are chunked.
+ */
+export function tokenizeKeys(data: string): string[] {
+  const out: string[] = []
+  let i = 0
+  while (i < data.length) {
+    if (data[i] === '\x1b') {
+      const m = ESC_SEQ_RE.exec(data.slice(i))
+      if (m) {
+        out.push(m[0])
+        i += m[0].length
+        continue
+      }
+    }
+    out.push(data[i])
+    i++
+  }
+  return out
+}
+
 export class TermEditor {
   private lines: string[]
   private row = 0
@@ -45,6 +71,10 @@ export class TermEditor {
   private undoStack: string[][] = []
   private killRing: string[] = []
   private exiting = false
+  /** Inside a bracketed paste block (\x1b[200~ … \x1b[201~). */
+  private pasting = false
+  /** Paste auto-switched vi from normal to insert mode. */
+  private pasteAutoInsert = false
   private term: Terminal
   private o: EditorOptions
 
@@ -68,17 +98,54 @@ export class TermEditor {
 
   handle(data: string) {
     if (this.exiting) return
-    if (this.savePrompt) {
-      this.handleSavePrompt(data)
-      return
-    }
-    if (this.o.kind === 'nano') {
-      this.handleNano(data)
-    } else {
-      this.handleVi(data)
+    // Normalize CRLF, then process one keystroke / escape sequence at a
+    // time so pasted or coalesced input is applied correctly.
+    const normalized = data.replace(/\r\n/g, '\r')
+    for (const key of tokenizeKeys(normalized)) {
+      this.handleKey(key)
     }
     this.clampCursor()
     this.render()
+  }
+
+  private handleKey(key: string) {
+    if (key === '\x1b[200~') {
+      // Start of a bracketed paste. In vi normal mode, flip to insert for
+      // the duration so pasted YAML lands verbatim instead of triggering
+      // random normal-mode commands.
+      this.pasting = true
+      if (this.o.kind === 'vi' && !this.insert && !this.colon) {
+        this.insert = true
+        this.pasteAutoInsert = true
+      }
+      return
+    }
+    if (key === '\x1b[201~') {
+      this.pasting = false
+      if (this.pasteAutoInsert) {
+        this.insert = false
+        this.pasteAutoInsert = false
+      }
+      return
+    }
+    if (this.pasting) {
+      // Literal content insert only — no command interpretation mid-paste.
+      if (this.colon) {
+        if (key >= ' ') this.cmdline += key
+      } else if (key === '\r' || key === '\n' || key === '\t' || key >= ' ') {
+        this.handleEditKey(key)
+      }
+      return
+    }
+    if (this.savePrompt) {
+      this.handleSavePrompt(key)
+      return
+    }
+    if (this.o.kind === 'nano') {
+      this.handleNano(key)
+    } else {
+      this.handleVi(key)
+    }
   }
 
   // ------------------------------------------------------------------ vi
@@ -187,6 +254,20 @@ export class TermEditor {
           if (this.col >= this.lines[this.row].length) this.col = Math.max(0, this.lines[this.row].length - 1)
           this.dirty = true
         }
+        break
+      case 'X':
+        this.pushUndo()
+        if (this.col > 0) {
+          const l = this.line()
+          this.lines[this.row] = l.slice(0, this.col - 1) + l.slice(this.col)
+          this.col--
+          this.dirty = true
+        }
+        break
+      case 'D':
+        this.pushUndo()
+        this.lines[this.row] = this.line().slice(0, this.col)
+        this.dirty = true
         break
       case 'i':
         this.insert = true
@@ -346,6 +427,12 @@ export class TermEditor {
         if (this.col < this.line().length) {
           const l = this.line()
           this.lines[this.row] = l.slice(0, this.col) + l.slice(this.col + 1)
+          this.dirty = true
+        } else if (this.row < this.lines.length - 1) {
+          // At end of line: pull the next line up (join), like real vi/nano.
+          const next = this.lines[this.row + 1]
+          this.lines.splice(this.row + 1, 1)
+          this.lines[this.row] += next
           this.dirty = true
         }
         break

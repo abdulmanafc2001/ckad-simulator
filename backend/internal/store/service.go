@@ -335,8 +335,11 @@ func (s *Service) SubmitAnswer(ctx context.Context, sessionID string, req dto.Su
 	}, nil
 }
 
-// EndSession finalizes a session and returns the results.
-func (s *Service) EndSession(sessionID string) (*dto.EndSessionResponse, error) {
+// EndSession finalizes a session. It grades every question in the session
+// against the current cluster state, stores the attempts, and returns the
+// results. Grading happens here (rather than per-question during the exam)
+// so candidates can work freely in the terminal until they finish.
+func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSessionResponse, error) {
 	sess, err := s.repo.GetSession(sessionID)
 	if err != nil {
 		return nil, err
@@ -349,14 +352,58 @@ func (s *Service) EndSession(sessionID string) (*dto.EndSessionResponse, error) 
 		}
 	}
 
+	// Grade every question in the session against the live cluster.
+	attempts := make([]*models.Attempt, 0, len(sess.QuestionIDs))
+	for _, qid := range sess.QuestionIDs {
+		q, err := s.repo.GetQuestion(qid)
+		if err != nil {
+			continue
+		}
+		checkResults := s.checker.Grade(ctx, q)
+		earned := 0
+		allPassed := true
+		for _, cr := range checkResults {
+			earned += cr.Points
+			if !cr.Passed {
+				allPassed = false
+			}
+		}
+		attempts = append(attempts, &models.Attempt{
+			ID:           uuid.NewString(),
+			SessionID:    sess.ID,
+			QuestionID:   q.ID,
+			Answer:       models.Answer{Text: "", TimeSpentSeconds: 0},
+			CheckResults: checkResults,
+			IsCorrect:    allPassed,
+			HintCount:    0,
+			Score:        earned,
+			StartedAt:    sess.StartedAt,
+			SubmittedAt:  time.Now().UTC(),
+		})
+	}
+
+	// Replace any previously stored attempts with the freshly graded set.
+	for _, a := range sess.Attempts {
+		_ = s.repo.DeleteAttempt(a.ID)
+	}
+	sess.Attempts = attempts
+	for _, a := range attempts {
+		if err := s.repo.CreateAttempt(a); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.repo.UpdateSession(sess); err != nil {
+		return nil, err
+	}
+
 	earned, max := s.sessionScore(sess)
 	passed := false
 	if max > 0 {
 		passed = earned*100/max >= PassScore
 	}
 
-	results := make([]dto.AttemptResult, 0, len(sess.Attempts))
-	for _, a := range sess.Attempts {
+	results := make([]dto.AttemptResult, 0, len(attempts))
+	for _, a := range attempts {
 		q, err := s.repo.GetQuestion(a.QuestionID)
 		if err != nil {
 			continue

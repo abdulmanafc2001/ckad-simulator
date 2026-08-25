@@ -6,6 +6,9 @@ import { api } from '../api/client'
 import { TermEditor, tokenizeKeys, type EditorKind } from './editor'
 
 const PROMPT = 'candidate@ckad-simulator:~$ '
+// Same visible text as PROMPT, but with the `user@host:` portion in green.
+// ANSI escapes are zero-width, so PROMPT.length stays valid for cursor math.
+const PROMPT_COLORED = '\x1b[32mcandidate@ckad-simulator:\x1b[0m~$ '
 
 /** Editor commands handled by the built-in in-terminal emulation. */
 const EDITOR_BINS = new Set(['vi', 'vim', 'view', 'nano'])
@@ -61,17 +64,43 @@ export function ExamTerminal({ banner }: TerminalProps) {
     term.open(hostRef.current)
     fit.fit()
     termRef.current = term
+
+    // Intercept Ctrl+Shift+V (paste) and Ctrl+Shift+C (copy). These are
+    // browser-reserved shortcuts (paste-as-plain-text / DevTools inspect) that
+    // the browser handles itself, so xterm never receives them. We handle them
+    // manually and stop the browser from acting on them.
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || !e.shiftKey) return
+      const k = e.key.toLowerCase()
+      if (k === 'v') {
+        e.preventDefault()
+        navigator.clipboard
+          ?.readText()
+          .then((text) => {
+            if (text) term.paste(text)
+          })
+          .catch(() => {})
+      } else if (k === 'c') {
+        const sel = term.getSelection()
+        if (sel) {
+          e.preventDefault()
+          navigator.clipboard?.writeText(sel).catch(() => {})
+        }
+      }
+    }
+    hostRef.current.addEventListener('keydown', onKeyDown)
+
     // Bracketed paste: pasted text arrives wrapped in \x1b[200~ … \x1b[201~
     // so multi-line pastes are handled deliberately instead of being
     // interpreted key-by-key (which mangled YAML in vi).
     term.write('\x1b[?2004h')
 
-    const writePrompt = () => term.write('\r\n' + PROMPT)
+    const writePrompt = () => term.write('\r\n' + PROMPT_COLORED)
 
     if (banner) {
       term.writeln(banner)
     }
-    term.write(PROMPT)
+    term.write(PROMPT_COLORED)
 
     /** Moves the screen cursor to logical index `idx` of the prompt+input
      * region and updates cursorRef. Computes the delta from the CURRENT
@@ -104,7 +133,7 @@ export function ExamTerminal({ banner }: TerminalProps) {
       let out = ''
       const upToStart = Math.floor(cur / cols)
       if (upToStart > 0) out += `\x1b[${upToStart}A`
-      out += '\r\x1b[J' + PROMPT + lineRef.current
+      out += '\r\x1b[J' + PROMPT_COLORED + lineRef.current
       const up = Math.floor((total - cur) / cols)
       if (up > 0) out += `\x1b[${up}A`
       const c = cur % cols
@@ -127,7 +156,7 @@ export function ExamTerminal({ banner }: TerminalProps) {
       const cols = term.cols
       const cur = PROMPT.length + cursorRef.current
       const total = PROMPT.length + lineRef.current.length
-      let out = '\x1b[2J\x1b[3J\x1b[H' + PROMPT + lineRef.current
+      let out = '\x1b[2J\x1b[3J\x1b[H' + PROMPT_COLORED + lineRef.current
       const up = Math.floor((total - cur) / cols)
       if (up > 0) out += `\x1b[${up}A`
       const c = cur % cols
@@ -166,7 +195,7 @@ export function ExamTerminal({ banner }: TerminalProps) {
           term.write(cp.slice(lastTok.length))
         }
         term.write('\r\n\x1b[90m' + matches.join('   ') + '\x1b[0m')
-        term.write('\r\n' + PROMPT + lineRef.current)
+        term.write('\r\n' + PROMPT_COLORED + lineRef.current)
         cursorRef.current = lineRef.current.length
       } catch {
         // Completion is best-effort; ignore failures.
@@ -397,6 +426,7 @@ export function ExamTerminal({ banner }: TerminalProps) {
 
     return () => {
       window.removeEventListener('resize', onResize)
+      hostRef.current?.removeEventListener('keydown', onKeyDown)
       disposers.forEach((d) => d.dispose())
       term.dispose()
       termRef.current = null

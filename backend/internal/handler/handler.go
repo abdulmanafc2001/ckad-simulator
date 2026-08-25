@@ -7,10 +7,10 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/dto"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/memory"
+	"github.com/gin-gonic/gin"
 )
 
 // Handler wraps the application service and exposes HTTP methods.
@@ -102,7 +102,7 @@ func (h *Handler) SubmitAnswer(c *gin.Context) {
 
 // EndSession finalizes a session and returns results.
 func (h *Handler) EndSession(c *gin.Context) {
-	res, err := h.svc.EndSession(c.Param("id"))
+	res, err := h.svc.EndSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, memory.ErrNotFound) {

@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { api, ApiError } from './api/client'
 import type { EndSessionResponse, Question, StartSessionResponse } from './api/types'
@@ -7,6 +7,12 @@ import { Home } from './components/Home'
 import { ResultsView } from './components/ResultsView'
 
 type View = 'home' | 'exam' | 'results'
+type Theme = 'light' | 'dark'
+
+function getInitialTheme(): Theme {
+  const stored = localStorage.getItem('ckad-theme')
+  return stored === 'light' || stored === 'dark' ? stored : 'dark'
+}
 
 export default function App() {
   const [view, setView] = useState<View>('home')
@@ -17,6 +23,16 @@ export default function App() {
   const [starting, setStarting] = useState(false)
   const [startError, setStartError] = useState<string | undefined>()
   const [finishing, setFinishing] = useState(false)
+
+  const [theme, setTheme] = useState<Theme>(getInitialTheme)
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem('ckad-theme', theme)
+  }, [theme])
+  const toggleTheme = useCallback(
+    () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    [],
+  )
 
   const handleStart = useCallback(async () => {
     setStarting(true)
@@ -64,6 +80,14 @@ export default function App() {
           <span>CKAD Simulator</span>
         </div>
         <span className="tagline">Certified Kubernetes Application Developer practice</span>
+        <button
+          className="btn btn-ghost theme-toggle"
+          onClick={toggleTheme}
+          aria-label="Toggle color theme"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
       </header>
 
       <main className="app-main">

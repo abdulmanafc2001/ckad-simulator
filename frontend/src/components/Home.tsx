@@ -58,9 +58,19 @@ export function Home({ onStart, starting, startError }: HomeProps) {
     [questions],
   )
 
+  const domainCount = grouped.size
+
+  const stats = [
+    { label: 'Questions', value: questions.length, hint: 'in the bank' },
+    { label: 'Domains', value: domainCount, hint: 'CKAD covered' },
+    { label: 'Total points', value: totalWeight, hint: 'weighted' },
+    { label: 'Exam length', value: '2h', hint: 'timed session' },
+  ]
+
   return (
     <div className="home">
       <section className="hero">
+        <div className="hero-eyebrow">Hands-on Kubernetes practice</div>
         <h2>Practice the Certified Kubernetes Application Developer exam</h2>
         <p>
           Work through realistic, hands-on tasks across all five CKAD domains. Start a
@@ -71,11 +81,16 @@ export function Home({ onStart, starting, startError }: HomeProps) {
           {starting ? 'Starting…' : 'Start a 2-hour exam session'}
         </button>
         {startError && <p className="error">{startError}</p>}
-        {!loading && !error && (
-          <p className="muted">
-            {questions.length} questions available · {totalWeight} total points
-          </p>
-        )}
+      </section>
+
+      <section className="stats" aria-label="Overview">
+        {stats.map((s) => (
+          <div key={s.label} className="stat-card">
+            <span className="stat-value">{s.value}</span>
+            <span className="stat-label">{s.label}</span>
+            <span className="stat-hint">{s.hint}</span>
+          </div>
+        ))}
       </section>
 
       <section className="bank">

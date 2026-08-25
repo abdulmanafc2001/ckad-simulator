@@ -1,10 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, ApiError } from '../api/client'
-import type {
-  Question,
-  StartSessionResponse,
-  SubmitAnswerResponse,
-} from '../api/types'
+import { useEffect, useMemo, useState } from 'react'
+import type { Question, StartSessionResponse } from '../api/types'
 import { DifficultyBadge, DomainBadge, WeightBadge } from './Badges'
 import { CopyableText } from './Copyable'
 import { Timer } from './Timer'
@@ -20,32 +15,23 @@ interface ExamViewProps {
 export function ExamView({ session, questions, onFinish, finishing }: ExamViewProps) {
   const [index, setIndex] = useState(0)
   const [hintsShown, setHintsShown] = useState<Record<string, number>>({})
-  const [submissions, setSubmissions] = useState<Record<string, SubmitAnswerResponse>>({})
+  const [visited, setVisited] = useState<Record<string, boolean>>({})
   const [flagged, setFlagged] = useState<Record<string, boolean>>({})
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // First time each question is displayed, so we can report time spent.
-  const startTimes = useRef<Record<string, number>>({})
 
   const question = questions[index]
 
-  // Record when the current question is first shown (in an effect so we don't
-  // mutate a ref or call Date.now() during render).
+  // Mark each question as visited the first time it is shown, so the
+  // navigator and progress bar can reflect what the candidate has opened.
   useEffect(() => {
-    if (!startTimes.current[question.id]) {
-      startTimes.current[question.id] = Date.now()
-    }
+    setVisited((prev) => (prev[question.id] ? prev : { ...prev, [question.id]: true }))
   }, [question.id])
 
-  const submission = submissions[question.id]
-  const answered = Boolean(submission)
   const shown = hintsShown[question.id] ?? 0
 
-  const answeredCount = Object.keys(submissions).length
+  const visitedCount = Object.keys(visited).length
   const progressPct = useMemo(
-    () => Math.round((answeredCount / questions.length) * 100),
-    [answeredCount, questions.length],
+    () => Math.round((visitedCount / questions.length) * 100),
+    [visitedCount, questions.length],
   )
 
   function revealHint() {
@@ -55,29 +41,8 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
     }))
   }
 
-  async function submit() {
-    setSubmitting(true)
-    setError(null)
-    try {
-      const timeSpentSeconds = Math.round(
-        (Date.now() - (startTimes.current[question.id] ?? Date.now())) / 1000,
-      )
-      const res = await api.submitAnswer(session.id, {
-        questionId: question.id,
-        answerText: '',
-        timeSpentSeconds,
-        hintCount: shown,
-      })
-      setSubmissions((prev) => ({ ...prev, [question.id]: res }))
-    } catch (err: unknown) {
-      setError(err instanceof ApiError ? err.message : 'Failed to submit answer')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
   function statusOf(qid: string): 'done' | 'unanswered' {
-    return submissions[qid] ? 'done' : 'unanswered'
+    return visited[qid] ? 'done' : 'unanswered'
   }
 
   const isFlagged = Boolean(flagged[question.id])
@@ -90,7 +55,7 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
   // killer.sh-style label for the dropdown: number, flag, done state.
   function optionLabel(q: Question, i: number): string {
     const parts = [`${i + 1}. ${q.title}`]
-    if (submissions[q.id]) parts.push('✓')
+    if (visited[q.id]) parts.push('✓')
     if (flagged[q.id]) parts.push('⚑')
     return parts.join(' ')
   }
@@ -98,15 +63,6 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
   return (
     <div className="exam">
       <div className="exam-topbar">
-        <div className="exam-progress">
-          <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
-          </div>
-          <span className="muted">
-            {answeredCount}/{questions.length} answered
-            {flaggedCount > 0 && ` · ⚑ ${flaggedCount} flagged`}
-          </span>
-        </div>
         <select
           className="q-select"
           value={index}
@@ -119,6 +75,15 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
             </option>
           ))}
         </select>
+        <div className="exam-progress">
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${progressPct}%` }} />
+          </div>
+          <span className="muted">
+            {visitedCount}/{questions.length} viewed
+            {flaggedCount > 0 && ` · ⚑ ${flaggedCount} flagged`}
+          </span>
+        </div>
         <div className="exam-meta">
           <Timer
             startedAt={session.startedAt}
@@ -184,7 +149,7 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
           <section className="q-hints">
             <div className="q-hints-head">
               <h4>Hints</h4>
-              {shown < question.hints.length && !answered && (
+              {shown < question.hints.length && (
                 <button className="btn btn-ghost" onClick={revealHint}>
                   Reveal hint ({shown}/{question.hints.length})
                 </button>
@@ -225,29 +190,10 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
           <h4>Terminal</h4>
           <p className="muted">
             Solve the task directly here with <code>kubectl</code>. Your commands run against
-            the live cluster — press “Mark as done” when finished. Marks and solutions are
-            revealed only after you finish the exam.
+            the live cluster. Grading and reference solutions are revealed only after you
+            press “Finish exam”.
           </p>
           <ExamTerminal />
-          {error && <p className="error">{error}</p>}
-          {!answered ? (
-            <button className="btn btn-primary" onClick={submit} disabled={submitting}>
-              {submitting ? 'Saving…' : 'Mark as done'}
-            </button>
-          ) : (
-            <div className="result done">
-              <div className="result-head">
-                <strong>✓ Marked as done</strong>
-              </div>
-              <p className="muted">
-                You can keep working on this task and mark it again — your latest cluster
-                state is what gets graded when the exam ends.
-              </p>
-              <button className="btn" onClick={submit} disabled={submitting}>
-                {submitting ? 'Saving…' : 'Mark as done again'}
-              </button>
-            </div>
-          )}
           </aside>
         </div>
       </div>

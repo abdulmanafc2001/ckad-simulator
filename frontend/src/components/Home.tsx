@@ -80,6 +80,12 @@ export function Home({ onStart, starting, startError }: HomeProps) {
         <button className="btn btn-primary btn-lg" onClick={onStart} disabled={starting || loading}>
           {starting ? 'Starting…' : 'Start a 2-hour exam session'}
         </button>
+        {starting && (
+          <p className="muted start-note">
+            Bringing up the cluster and preparing your exam environment — this may take a
+            moment…
+          </p>
+        )}
         {startError && <p className="error">{startError}</p>}
       </section>
 

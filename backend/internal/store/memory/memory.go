@@ -94,6 +94,28 @@ func (s *Store) UpdateSession(sess *models.Session) error {
 	return nil
 }
 
+func (s *Store) ListSessions() ([]*models.Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]*models.Session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		out = append(out, sess)
+	}
+	return out, nil
+}
+
+func (s *Store) DeleteSession(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.sessions[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.sessions, id)
+	return nil
+}
+
 func (s *Store) CreateAttempt(a *models.Attempt) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

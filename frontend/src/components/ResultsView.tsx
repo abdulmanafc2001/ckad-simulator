@@ -9,7 +9,8 @@ interface ResultsViewProps {
 
 export function ResultsView({ results, onRestart }: ResultsViewProps) {
   const pct = results.max > 0 ? Math.round((results.earned / results.max) * 100) : 0
-  const correct = results.attempts.filter((a) => a.isCorrect).length
+  const attempted = results.attempts.filter((a) => a.attemptId !== '')
+  const correct = attempted.filter((a) => a.isCorrect).length
 
   return (
     <div className="results">
@@ -24,7 +25,7 @@ export function ResultsView({ results, onRestart }: ResultsViewProps) {
           <h2>{results.passed ? 'Passed' : 'Not passed'}</h2>
           <p className="muted">
             Passing score is {results.passScore}%. You fully solved {correct} of{' '}
-            {results.totalQuestions} questions ({results.attempts.length} attempted). Expand a task to see what failed
+            {results.totalQuestions} questions ({attempted.length} attempted). Expand a task to see what failed
             and how to solve it.
           </p>
           <button className="btn btn-primary" onClick={onRestart}>
@@ -35,15 +36,11 @@ export function ResultsView({ results, onRestart }: ResultsViewProps) {
 
       <section className="results-breakdown">
         <h3>Review — what failed & how to solve it</h3>
-        {results.attempts.length === 0 ? (
-          <p className="muted">No questions were submitted in this session.</p>
-        ) : (
-          <ul className="results-review">
-            {results.attempts.map((attempt) => (
-              <AttemptReview key={attempt.attemptId} attempt={attempt} />
-            ))}
-          </ul>
-        )}
+        <ul className="results-review">
+          {results.attempts.map((attempt) => (
+            <AttemptReview key={attempt.questionId} attempt={attempt} />
+          ))}
+        </ul>
       </section>
     </div>
   )
@@ -51,7 +48,9 @@ export function ResultsView({ results, onRestart }: ResultsViewProps) {
 
 function AttemptReview({ attempt }: { attempt: AttemptResult }) {
   const [open, setOpen] = useState(!attempt.isCorrect)
-  const failedChecks = attempt.checks.filter((c) => !c.passed)
+  const checks = attempt.checks ?? []
+  const failedChecks = checks.filter((c) => !c.passed)
+  const attempted = attempt.attemptId !== ''
 
   return (
     <li className={`review-item ${attempt.isCorrect ? 'ok' : 'bad'}`}>
@@ -59,7 +58,10 @@ function AttemptReview({ attempt }: { attempt: AttemptResult }) {
         <span className="review-mark">{attempt.isCorrect ? '✓' : '✗'}</span>
         <span className="review-title">
           {attempt.question}
-          {failedChecks.length > 0 && (
+          {!attempted && (
+            <span className="review-failed-note"> — not attempted</span>
+          )}
+          {attempted && failedChecks.length > 0 && (
             <span className="review-failed-note">
               {' '}
               — {failedChecks.length} check{failedChecks.length > 1 ? 's' : ''} failed
@@ -81,23 +83,29 @@ function AttemptReview({ attempt }: { attempt: AttemptResult }) {
           <h5>Task</h5>
           <p>{attempt.task}</p>
 
-          <h5>Check results</h5>
-          <ul className="check-list">
-            {attempt.checks.map((c) => (
-              <li key={c.checkId} className={c.passed ? 'check ok' : 'check bad'}>
-                <span className="check-mark">{c.passed ? '✓' : '✗'}</span>
-                <span className="check-desc">
-                  {c.description}
-                  {!c.passed && c.output && (
-                    <code className="check-output">observed: {c.output}</code>
-                  )}
-                </span>
-                <span className="check-pts">
-                  {c.points}/{c.maxPoints}
-                </span>
-              </li>
-            ))}
-          </ul>
+          {checks.length > 0 ? (
+            <>
+              <h5>Check results</h5>
+              <ul className="check-list">
+                {checks.map((c) => (
+                  <li key={c.checkId} className={c.passed ? 'check ok' : 'check bad'}>
+                    <span className="check-mark">{c.passed ? '✓' : '✗'}</span>
+                    <span className="check-desc">
+                      {c.description}
+                      {!c.passed && c.output && (
+                        <code className="check-output">observed: {c.output}</code>
+                      )}
+                    </span>
+                    <span className="check-pts">
+                      {c.points}/{c.maxPoints}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="muted">Not attempted — no checks were run.</p>
+          )}
 
           <h5>How to do it correctly</h5>
           <pre>{attempt.solution}</pre>

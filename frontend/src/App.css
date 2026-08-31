@@ -156,6 +156,16 @@
 .hero .btn-lg {
   margin-bottom: 0;
 }
+.start-note {
+  margin: 1rem auto 0;
+  max-width: 52ch;
+  font-size: 0.95rem;
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
 
 /* Overview stat cards */
 .stats {

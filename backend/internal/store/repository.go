@@ -13,6 +13,8 @@ type Repository interface {
 	CreateSession(s *models.Session) error
 	GetSession(id string) (*models.Session, error)
 	UpdateSession(s *models.Session) error
+	ListSessions() ([]*models.Session, error)
+	DeleteSession(id string) error
 
 	CreateAttempt(a *models.Attempt) error
 	GetAttempt(id string) (*models.Attempt, error)

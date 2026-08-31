@@ -2,736 +2,2054 @@ package main
 
 import "github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 
-// seedQuestions returns the full CKAD question bank: the hand-written
-// originals plus the programmatically generated families (questions_gen.go).
+// seedQuestions returns the CKAD question bank derived from
+// https://github.com/dgkanatsios/ckad-exercises,
+// https://github.com/jamesbuckett/ckad-questions,
+// https://github.com/ibrahimatay/CKAD-Exercises,
+// https://github.com/bbachi/CKAD-Practice-Questions and
+// https://github.com/aleti-pavan/ckad-practice-questions
+// Every question is self-contained: it provisions its own namespace,
+// is solved against the live cluster (minikube/kind), is graded by
+// weighted kubectl checks (killer.sh style partial credit), and
+// cleans up after itself.
 func seedQuestions() []*models.Question {
-	return append(manualQuestions(), generatedQuestions()...)
-}
-
-// manualQuestions returns the original hand-written CKAD question bank. Every
-// task is self-contained: it prepares its own namespace, is solved against
-// the live cluster (minikube), is graded by weighted kubectl checks
-// (killer.sh style partial credit), and cleans up after itself.
-func manualQuestions() []*models.Question {
 	return []*models.Question{
+		// =========================================================
+		// a.core_concepts (13%)
+		// =========================================================
 		{
-			ID:          "q-pod-nginx",
+			ID:          "dg-a01",
 			Domain:      models.DomainApplicationDesign,
 			Difficulty:  models.DifficultyEasy,
-			Title:       "Run a single nginx Pod",
-			Description: "Create the simplest possible workload: a single Pod running the nginx web server.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-basics"}},
-			Task:        "Create a Pod named 'web' using the image 'nginx:1.25' in the 'ckad-basics' namespace.",
-			Hints: []string{
-				"You can generate a Pod imperatively with 'kubectl run'.",
-				"Use --image to set the container image and -n to set the namespace.",
-			},
-			Solution: "kubectl run web --image=nginx:1.25 -n ckad-basics",
-			Weight:   4,
-			Checks: []models.Check{
-				{ID: "pod-exists", Description: "Pod web exists in ckad-basics", Weight: 2,
-					CommandArgs: "get pod web -n ckad-basics -o name", ExpectSubstring: "pod/web"},
-				{ID: "pod-image", Description: "Pod uses image nginx:1.25", Weight: 2,
-					CommandArgs: "get pod web -n ckad-basics -o jsonpath={.spec.containers[0].image}", ExpectSubstring: "nginx:1.25"},
-			},
-			Cleanup: []string{"delete namespace ckad-basics --ignore-not-found"},
-		},
-		{
-			ID:          "q-multi-container",
-			Domain:      models.DomainApplicationDesign,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Init container ordering",
-			Description: "Init containers run to completion before app containers start. Use one to prepare shared state.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-init"}},
-			Task:        "In namespace ckad-init, create a Pod named 'init-demo' with an initContainer named 'prep' (busybox) that writes 'hi' to /work/index.html on an emptyDir volume, and a main container 'web' (nginx) mounting the same volume at /usr/share/nginx/html.",
-			Hints: []string{
-				"initContainers is a list under spec, sibling to containers.",
-				"Mount the same emptyDir volume into both the init and main containers.",
-			},
-			Solution: `apiVersion: v1
-kind: Pod
-metadata:
-  name: init-demo
-  namespace: ckad-init
-spec:
-  initContainers:
-  - name: prep
-    image: busybox:1.36
-    command: ['sh','-c','echo hi > /work/index.html']
-    volumeMounts:
-    - {name: shared, mountPath: /work}
-  containers:
-  - name: web
-    image: nginx:1.25
-    volumeMounts:
-    - {name: shared, mountPath: /usr/share/nginx/html}
-  volumes:
-  - name: shared
-    emptyDir: {}`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "init-exists", Description: "Init container prep exists", Weight: 2,
-					CommandArgs: `get pod init-demo -n ckad-init -o jsonpath={.spec.initContainers[*].name}`, ExpectRegex: `(^| )prep( |$)`},
-				{ID: "main-exists", Description: "Main container web exists", Weight: 1,
-					CommandArgs: `get pod init-demo -n ckad-init -o jsonpath={.spec.containers[*].name}`, ExpectRegex: `(^| )web( |$)`},
-				{ID: "shared-vol", Description: "Pod defines emptyDir volume shared", Weight: 2,
-					CommandArgs: `get pod init-demo -n ckad-init -o jsonpath={.spec.volumes[*].name}`, ExpectRegex: `(^| )shared( |$)`},
-				{ID: "main-mount", Description: "web mounts /usr/share/nginx/html", Weight: 1,
-					CommandArgs: `get pod init-demo -n ckad-init -o jsonpath={.spec.containers[?(@.name=="web")].volumeMounts[0].mountPath}`, ExpectSubstring: "/usr/share/nginx/html"},
-			},
-			Cleanup: []string{"delete namespace ckad-init --ignore-not-found"},
-		},
-		{
-			ID:          "q-job",
-			Domain:      models.DomainApplicationDesign,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Create a Job",
-			Description: "A Job creates one or more Pods and ensures a specified number complete successfully.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-job"}},
-			Task:        "In namespace ckad-job, create a Job named 'pi' that runs image perl:5.34 computing pi to 2000 digits ('perl -Mbignum=bpi -wle \"print bpi(2000)\"').",
-			Hints: []string{
-				"Use 'kubectl create job' to scaffold it.",
-				"A Job's restartPolicy must be Never or OnFailure.",
-			},
-			Solution: `kubectl create job pi --image=perl:5.34 -n ckad-job -- perl -Mbignum=bpi -wle 'print bpi(2000)'`,
-			Weight:   6,
-			Checks: []models.Check{
-				{ID: "job-exists", Description: "Job pi exists", Weight: 2,
-					CommandArgs: "get job pi -n ckad-job -o name", ExpectSubstring: "job.batch/pi"},
-				{ID: "job-image", Description: "Job uses perl image", Weight: 2,
-					CommandArgs: "get job pi -n ckad-job -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "perl"},
-				{ID: "job-restart", Description: "restartPolicy is Never or OnFailure", Weight: 2,
-					CommandArgs: "get job pi -n ckad-job -o jsonpath={.spec.template.spec.restartPolicy}", ExpectRegex: `Never|OnFailure`},
-			},
-			Cleanup: []string{"delete namespace ckad-job --ignore-not-found"},
-		},
-		{
-			ID:          "q-cronjob",
-			Domain:      models.DomainApplicationDesign,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Schedule a CronJob",
-			Description: "A CronJob runs Jobs on a repeating schedule using cron syntax.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-cron"}},
-			Task:        "In namespace ckad-cron, create a CronJob named 'hello' running every minute (*/1 * * * *) with busybox:1.36 executing '/bin/sh -c date; echo Hello'.",
-			Hints: []string{
-				"The schedule '*/1 * * * *' means every minute.",
-				"Use 'kubectl create cronjob' with --schedule.",
-			},
-			Solution: `kubectl create cronjob hello --image=busybox:1.36 --schedule='*/1 * * * *' -n ckad-cron -- /bin/sh -c 'date; echo Hello'`,
-			Weight:   6,
-			Checks: []models.Check{
-				{ID: "cron-exists", Description: "CronJob hello exists", Weight: 2,
-					CommandArgs: "get cronjob hello -n ckad-cron -o name", ExpectSubstring: "cronjob.batch/hello"},
-				{ID: "cron-schedule", Description: "Schedule is */1 * * * *", Weight: 2,
-					CommandArgs: "get cronjob hello -n ckad-cron -o jsonpath={.spec.schedule}", ExpectSubstring: "*/1 * * * *"},
-				{ID: "cron-image", Description: "Uses busybox image", Weight: 2,
-					CommandArgs: "get cronjob hello -n ckad-cron -o jsonpath={.spec.jobTemplate.spec.template.spec.containers[0].image}", ExpectSubstring: "busybox"},
-			},
-			Cleanup: []string{"delete namespace ckad-cron --ignore-not-found"},
-		},
-		{
-			ID:          "q-pv-pvc",
-			Domain:      models.DomainApplicationDesign,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Persistent storage claim",
-			Description: "Pods request durable storage through a PersistentVolumeClaim (PVC).",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-store"}},
-			Task:        "In namespace ckad-store, create a PersistentVolumeClaim named 'data' requesting 1Gi of ReadWriteOnce storage.",
-			Hints: []string{
-				"The kind is PersistentVolumeClaim.",
-				"accessModes is a list; storage goes under resources.requests.",
-			},
-			Solution: `apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: data
-  namespace: ckad-store
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "pvc-exists", Description: "PVC data exists", Weight: 2,
-					CommandArgs: "get pvc data -n ckad-store -o name", ExpectSubstring: "persistentvolumeclaim/data"},
-				{ID: "pvc-size", Description: "Requests 1Gi storage", Weight: 2,
-					CommandArgs: "get pvc data -n ckad-store -o jsonpath={.spec.resources.requests.storage}", ExpectSubstring: "1Gi"},
-				{ID: "pvc-access", Description: "AccessMode ReadWriteOnce", Weight: 2,
-					CommandArgs: "get pvc data -n ckad-store -o jsonpath={.spec.accessModes[0]}", ExpectSubstring: "ReadWriteOnce"},
-			},
-			Cleanup: []string{"delete namespace ckad-store --ignore-not-found"},
-		},
-		{
-			ID:          "q-deploy-nginx",
-			Domain:      models.DomainApplicationDeployment,
-			Difficulty:  models.DifficultyEasy,
-			Title:       "Create a Deployment",
-			Description: "Deployments manage a replicated, self-healing set of Pods.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-deploy"}},
-			Task:        "In namespace ckad-deploy, create a Deployment named 'web' with 3 replicas using image nginx:1.25.",
-			Hints: []string{
-				"Use 'kubectl create deployment' then scale, or pass --replicas.",
-				"Verify with 'kubectl get deploy web'.",
-			},
-			Solution: `kubectl create deployment web --image=nginx:1.25 --replicas=3 -n ckad-deploy`,
-			Weight:   4,
-			Checks: []models.Check{
-				{ID: "deploy-exists", Description: "Deployment web exists", Weight: 1,
-					CommandArgs: "get deploy web -n ckad-deploy -o name", ExpectSubstring: "deployment.apps/web"},
-				{ID: "deploy-replicas", Description: "Declares 3 replicas", Weight: 2,
-					CommandArgs: "get deploy web -n ckad-deploy -o jsonpath={.spec.replicas}", ExpectSubstring: "3"},
-				{ID: "deploy-image", Description: "Uses nginx:1.25", Weight: 1,
-					CommandArgs: "get deploy web -n ckad-deploy -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.25"},
-			},
-			Cleanup: []string{"delete namespace ckad-deploy --ignore-not-found"},
-		},
-		{
-			ID:          "q-deploy-rollback",
-			Domain:      models.DomainApplicationDeployment,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Roll back a Deployment",
-			Description: "Deployments keep revision history so you can undo bad rollouts.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-rollout"},
-				{Name: "deploy v1", Namespace: "ckad-rollout", YAML: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: api
-spec:
-  replicas: 1
-  selector: {matchLabels: {app: api}}
-  template:
-    metadata: {labels: {app: api}}
-    spec:
-      containers:
-        - name: api
-          image: nginx:1.24
-`},
-				{Name: "upgrade to broken v2", CommandArgs: "set image deployment/api api=nginx:9.9 -n ckad-rollout"},
-			},
-			Task: "The Deployment api in namespace ckad-rollout was upgraded to a non-existent image nginx:9.9 and its rollout is stuck. Roll it back to the previous revision.",
-			Hints: []string{
-				"Check history with: kubectl rollout history deployment/api -n ckad-rollout",
-				"Undo with: kubectl rollout undo deployment/api -n ckad-rollout",
-			},
-			Solution: `kubectl rollout undo deployment/api -n ckad-rollout`,
-			Weight:   6,
-			Checks: []models.Check{
-				{ID: "image-restored", Description: "Image rolled back to nginx:1.24", Weight: 4,
-					CommandArgs: "get deploy api -n ckad-rollout -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.24"},
-				{ID: "rollout-ok", Description: "Rollout is complete (available)", Weight: 2,
-					CommandArgs: "get deploy api -n ckad-rollout -o jsonpath={.status.conditions[?(@.type==\"Available\")].status}", ExpectSubstring: "True"},
-			},
-			Cleanup: []string{"delete namespace ckad-rollout --ignore-not-found"},
-		},
-		{
-			ID:          "q-labels",
-			Domain:      models.DomainApplicationDeployment,
-			Difficulty:  models.DifficultyEasy,
-			Title:       "Label a resource",
-			Description: "Labels are key/value pairs attached to objects for grouping and selection.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-labels"},
-				{Name: "create pod", Namespace: "ckad-labels", YAML: `apiVersion: v1
-kind: Pod
-metadata:
-  name: labeled
-spec:
-  containers:
-    - name: main
-      image: nginx:1.25
-`},
-			},
-			Task: "In namespace ckad-labels, add the label tier=frontend to the existing Pod 'labeled'.",
-			Hints: []string{
-				"kubectl label pod <name> key=value adds or updates labels.",
-				"Use --overwrite if the key already exists.",
-			},
-			Solution: `kubectl label pod labeled tier=frontend -n ckad-labels`,
-			Weight:   4,
-			Checks: []models.Check{
-				{ID: "label-set", Description: "Pod has label tier=frontend", Weight: 4,
-					CommandArgs: "get pod labeled -n ckad-labels -o jsonpath={.metadata.labels.tier}", ExpectSubstring: "frontend"},
-			},
-			Cleanup: []string{"delete namespace ckad-labels --ignore-not-found"},
-		},
-		{
-			ID:          "q-probe",
-			Domain:      models.DomainApplicationObservability,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Liveness and readiness probes",
-			Description: "Probes let the kubelet and Services know whether a container is healthy.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-probes"},
-				{Name: "deploy api", Namespace: "ckad-probes", YAML: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: api
-spec:
-  replicas: 1
-  selector: {matchLabels: {app: api}}
-  template:
-    metadata: {labels: {app: api}}
-    spec:
-      containers:
-        - name: api
-          image: nginx:1.25
-          ports: [{containerPort: 80}]
-`},
-			},
-			Task: "In namespace ckad-probes, update Deployment api so its container has an HTTP livenessProbe and readinessProbe both hitting path /healthz on port 80.",
-			Hints: []string{
-				"kubectl edit deployment api -n ckad-probes and add livenessProbe/readinessProbe under the container.",
-				"Both probes need httpGet: {path: /healthz, port: 80}.",
-			},
-			Solution: `kubectl patch deployment api -n ckad-probes --type=strategic -p '
-spec:
-  template:
-    spec:
-      containers:
-        - name: api
-          livenessProbe: {httpGet: {path: /healthz, port: 80}}
-          readinessProbe: {httpGet: {path: /healthz, port: 80}}'`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "liveness-path", Description: "Liveness probe hits /healthz", Weight: 2,
-					CommandArgs: "get deploy api -n ckad-probes -o jsonpath={.spec.template.spec.containers[0].livenessProbe.httpGet.path}", ExpectSubstring: "/healthz"},
-				{ID: "readiness-path", Description: "Readiness probe hits /healthz", Weight: 2,
-					CommandArgs: "get deploy api -n ckad-probes -o jsonpath={.spec.template.spec.containers[0].readinessProbe.httpGet.path}", ExpectSubstring: "/healthz"},
-				{ID: "probe-port", Description: "Probes target port 80", Weight: 2,
-					CommandArgs: "get deploy api -n ckad-probes -o jsonpath={.spec.template.spec.containers[0].livenessProbe.httpGet.port}", ExpectSubstring: "80"},
-			},
-			Cleanup: []string{"delete namespace ckad-probes --ignore-not-found"},
-		},
-		{
-			ID:          "q-annotations",
-			Domain:      models.DomainApplicationDeployment,
-			Difficulty:  models.DifficultyEasy,
-			Title:       "Annotate a resource",
-			Description: "Annotations attach arbitrary non-identifying metadata to objects.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-annot"},
-				{Name: "create pod", Namespace: "ckad-annot", YAML: `apiVersion: v1
-kind: Pod
-metadata:
-  name: noted
-spec:
-  containers:
-    - name: main
-      image: nginx:1.25
-`},
-			},
-			Task: "In namespace ckad-annot, annotate the Pod 'noted' with owner=team-alpha.",
-			Hints: []string{
-				"kubectl annotate pod <name> key=value works like kubectl label.",
-			},
-			Solution: `kubectl annotate pod noted owner=team-alpha -n ckad-annot`,
-			Weight:   4,
-			Checks: []models.Check{
-				{ID: "annotation-set", Description: "Pod annotated owner=team-alpha", Weight: 4,
-					CommandArgs: "get pod noted -n ckad-annot -o jsonpath={.metadata.annotations.owner}", ExpectSubstring: "team-alpha"},
-			},
-			Cleanup: []string{"delete namespace ckad-annot --ignore-not-found"},
-		},
-		{
-			ID:          "q-configmap",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyEasy,
-			Title:       "Create a ConfigMap",
-			Description: "ConfigMaps store non-confidential configuration as key/value pairs.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-cm"}},
-			Task:        "In namespace ckad-cm, create a ConfigMap named app-config containing the entry MODE=production.",
-			Hints: []string{
-				"kubectl create configmap app-config --from-literal=MODE=production",
-			},
-			Solution: `kubectl create configmap app-config --from-literal=MODE=production -n ckad-cm`,
-			Weight:   4,
-			Checks: []models.Check{
-				{ID: "cm-exists", Description: "ConfigMap app-config exists", Weight: 1,
-					CommandArgs: "get configmap app-config -n ckad-cm -o name", ExpectSubstring: "configmap/app-config"},
-				{ID: "cm-data", Description: "Has MODE=production", Weight: 3,
-					CommandArgs: "get configmap app-config -n ckad-cm -o jsonpath={.data.MODE}", ExpectSubstring: "production"},
-			},
-			Cleanup: []string{"delete namespace ckad-cm --ignore-not-found"},
-		},
-		{
-			ID:          "q-secret",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyEasy,
-			Title:       "Create a Secret",
-			Description: "Secrets store sensitive data such as passwords and tokens.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-secret"}},
-			Task:        "In namespace ckad-secret, create a generic Secret named db-cred with keys USER=admin and PASS=s3cr3t.",
-			Hints: []string{
-				"kubectl create secret generic db-cred --from-literal=USER=admin --from-literal=PASS=s3cr3t",
-			},
-			Solution: `kubectl create secret generic db-cred --from-literal=USER=admin --from-literal=PASS=s3cr3t -n ckad-secret`,
-			Weight:   4,
-			Checks: []models.Check{
-				{ID: "secret-exists", Description: "Secret db-cred exists", Weight: 1,
-					CommandArgs: "get secret db-cred -n ckad-secret -o name", ExpectSubstring: "secret/db-cred"},
-				{ID: "secret-user", Description: "Key USER present", Weight: 1,
-					CommandArgs: "get secret db-cred -n ckad-secret -o jsonpath={.data.USER}", ExpectRegex: ".+"},
-				{ID: "secret-pass", Description: "Key PASS present", Weight: 2,
-					CommandArgs: "get secret db-cred -n ckad-secret -o jsonpath={.data.PASS}", ExpectRegex: ".+"},
-			},
-			Cleanup: []string{"delete namespace ckad-secret --ignore-not-found"},
-		},
-		{
-			ID:          "q-env-var",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Inject an environment variable",
-			Description: "Containers consume ConfigMap values through env or envFrom.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-env"},
-				{Name: "create configmap", Namespace: "ckad-env", YAML: `apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-data:
-  MODE: production
-`},
-			},
-			Task: "In namespace ckad-env, create a Pod named env-consumer (busybox:1.36, command sleep 3600) whose environment variable APP_MODE comes from ConfigMap app-config, key MODE.",
-			Hints: []string{
-				"In the Pod spec use env[].valueFrom.configMapKeyRef {name: app-config, key: MODE}.",
-			},
-			Solution: `cat <<EOF | kubectl apply -n ckad-env -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: env-consumer
-spec:
-  containers:
-    - name: main
-      image: busybox:1.36
-      command: ["sleep", "3600"]
-      env:
-        - name: APP_MODE
-          valueFrom:
-            configMapKeyRef: {name: app-config, key: MODE}
-EOF`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "pod-exists", Description: "Pod env-consumer exists", Weight: 2,
-					CommandArgs: "get pod env-consumer -n ckad-env -o name", ExpectSubstring: "pod/env-consumer"},
-				{ID: "env-name", Description: "Env var APP_MODE defined", Weight: 2,
-					CommandArgs: "get pod env-consumer -n ckad-env -o jsonpath={.spec.containers[0].env[0].name}", ExpectSubstring: "APP_MODE"},
-				{ID: "env-ref", Description: "Value comes from configMapKeyRef key MODE", Weight: 2,
-					CommandArgs: "get pod env-consumer -n ckad-env -o jsonpath={.spec.containers[0].env[0].valueFrom.configMapKeyRef.key}", ExpectSubstring: "MODE"},
-			},
-			Cleanup: []string{"delete namespace ckad-env --ignore-not-found"},
-		},
-		{
-			ID:          "q-resources",
-			Domain:      models.DomainApplicationObservability,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Set resource requests and limits",
-			Description: "Requests guarantee resources; limits cap consumption.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-res"}},
-			Task:        "In namespace ckad-res, create a Pod named resource-demo (nginx:1.25) with requests cpu=100m memory=128Mi and limits cpu=250m memory=256Mi.",
-			Hints: []string{
-				"Under the container add resources.requests and resources.limits.",
-			},
-			Solution: `cat <<EOF | kubectl apply -n ckad-res -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: resource-demo
-spec:
-  containers:
-    - name: main
-      image: nginx:1.25
-      resources:
-        requests: {cpu: 100m, memory: 128Mi}
-        limits: {cpu: 250m, memory: 256Mi}
-EOF`,
-			Weight: 4,
-			Checks: []models.Check{
-				{ID: "req-cpu", Description: "Requests cpu=100m", Weight: 1,
-					CommandArgs: "get pod resource-demo -n ckad-res -o jsonpath={.spec.containers[0].resources.requests.cpu}", ExpectSubstring: "100m"},
-				{ID: "req-mem", Description: "Requests memory=128Mi", Weight: 1,
-					CommandArgs: "get pod resource-demo -n ckad-res -o jsonpath={.spec.containers[0].resources.requests.memory}", ExpectSubstring: "128Mi"},
-				{ID: "lim-cpu", Description: "Limits cpu=250m", Weight: 1,
-					CommandArgs: "get pod resource-demo -n ckad-res -o jsonpath={.spec.containers[0].resources.limits.cpu}", ExpectSubstring: "250m"},
-				{ID: "lim-mem", Description: "Limits memory=256Mi", Weight: 1,
-					CommandArgs: "get pod resource-demo -n ckad-res -o jsonpath={.spec.containers[0].resources.limits.memory}", ExpectSubstring: "256Mi"},
-			},
-			Cleanup: []string{"delete namespace ckad-res --ignore-not-found"},
-		},
-		{
-			ID:          "q-sa",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Create a ServiceAccount",
-			Description: "ServiceAccounts provide an identity for processes running in Pods.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-sa"}},
-			Task:        "In namespace ckad-sa, create a ServiceAccount named pipeline and a Pod named sa-consumer (busybox:1.36, sleep 3600) that uses it.",
-			Hints: []string{
-				"kubectl create serviceaccount pipeline -n ckad-sa",
-				"Set spec.serviceAccountName on the Pod.",
-			},
-			Solution: `kubectl create serviceaccount pipeline -n ckad-sa
-cat <<EOF | kubectl apply -n ckad-sa -f -
-apiVersion: v1
-kind: Pod
-metadata:
-  name: sa-consumer
-spec:
-  serviceAccountName: pipeline
-  containers:
-    - name: main
-      image: busybox:1.36
-      command: ["sleep", "3600"]
-EOF`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "sa-exists", Description: "ServiceAccount pipeline exists", Weight: 2,
-					CommandArgs: "get sa pipeline -n ckad-sa -o name", ExpectSubstring: "serviceaccount/pipeline"},
-				{ID: "pod-exists", Description: "Pod sa-consumer exists", Weight: 2,
-					CommandArgs: "get pod sa-consumer -n ckad-sa -o name", ExpectSubstring: "pod/sa-consumer"},
-				{ID: "pod-sa", Description: "Pod uses serviceAccountName pipeline", Weight: 2,
-					CommandArgs: "get pod sa-consumer -n ckad-sa -o jsonpath={.spec.serviceAccountName}", ExpectSubstring: "pipeline"},
-			},
-			Cleanup: []string{"delete namespace ckad-sa --ignore-not-found"},
-		},
-		{
-			ID:          "q-resource-quota",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyHard,
-			Title:       "Apply a ResourceQuota",
-			Description: "ResourceQuotas constrain total resource consumption per namespace.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-quota"}},
-			Task:        "In namespace ckad-quota, create a ResourceQuota named team-quota limiting the namespace to 2 Pods and requests.cpu=500m.",
-			Hints: []string{
-				"Under spec.hard set pods: '2' and requests.cpu: 500m.",
-			},
-			Solution: `cat <<EOF | kubectl apply -n ckad-quota -f -
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: team-quota
-spec:
-  hard:
-    pods: "2"
-    requests.cpu: 500m
-EOF`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "quota-exists", Description: "ResourceQuota team-quota exists", Weight: 2,
-					CommandArgs: "get quota team-quota -n ckad-quota -o name", ExpectSubstring: "resourcequota/team-quota"},
-				{ID: "quota-pods", Description: "Limits pods to 2", Weight: 2,
-					CommandArgs: "get quota team-quota -n ckad-quota -o jsonpath={.spec.hard.pods}", ExpectSubstring: "2"},
-				{ID: "quota-cpu", Description: "Limits requests.cpu to 500m", Weight: 2,
-					CommandArgs: "get quota team-quota -n ckad-quota -o jsonpath={.spec.hard.requests\\.cpu}", ExpectSubstring: "500m"},
-			},
-			Cleanup: []string{"delete namespace ckad-quota --ignore-not-found"},
-		},
-		{
-			ID:          "q-limitrange",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyHard,
-			Title:       "Define a LimitRange",
-			Description: "LimitRanges apply default requests/limits to containers in a namespace.",
-			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-lr"}},
-			Task:        "In namespace ckad-lr, create a LimitRange named default-limits that gives containers a default CPU limit of 200m and a default memory limit of 256Mi.",
-			Hints: []string{
-				"Use type: Container with default: {cpu: 200m, memory: 256Mi}.",
-			},
-			Solution: `cat <<EOF | kubectl apply -n ckad-lr -f -
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: default-limits
-spec:
-  limits:
-    - type: Container
-      default:
-        cpu: 200m
-        memory: 256Mi
-EOF`,
-			Weight: 6,
-			Checks: []models.Check{
-				{ID: "lr-exists", Description: "LimitRange default-limits exists", Weight: 2,
-					CommandArgs: "get limitrange default-limits -n ckad-lr -o name", ExpectSubstring: "limitrange/default-limits"},
-				{ID: "lr-cpu", Description: "Default CPU limit 200m", Weight: 2,
-					CommandArgs: "get limitrange default-limits -n ckad-lr -o jsonpath={.spec.limits[0].default.cpu}", ExpectSubstring: "200m"},
-				{ID: "lr-mem", Description: "Default memory limit 256Mi", Weight: 2,
-					CommandArgs: "get limitrange default-limits -n ckad-lr -o jsonpath={.spec.limits[0].default.memory}", ExpectSubstring: "256Mi"},
-			},
-			Cleanup: []string{"delete namespace ckad-lr --ignore-not-found"},
-		},
-		{
-			ID:          "q-namespace",
-			Domain:      models.DomainApplicationEnvironment,
-			Difficulty:  models.DifficultyEasy,
-			Title:       "Create a Namespace",
-			Description: "Namespaces split cluster resources between multiple users or projects.",
+			Title:       "Create a namespace and nginx Pod",
+			Description: "Namespaces isolate resources. Create both imperatively.",
 			Prepare:     nil,
-			Task:        "Create a Namespace named ckad-team-x.",
+			Task:        "Create a namespace called 'mynamespace' and a Pod named 'nginx' using image 'nginx' in that namespace (restart=Never).",
 			Hints: []string{
-				"kubectl create namespace ckad-team-x",
+				"kubectl create namespace mynamespace",
+				"kubectl run nginx --image=nginx --restart=Never -n mynamespace",
 			},
-			Solution: `kubectl create namespace ckad-team-x`,
+			Solution: "kubectl create namespace mynamespace\nkubectl run nginx --image=nginx --restart=Never -n mynamespace",
 			Weight:   4,
 			Checks: []models.Check{
-				{ID: "ns-exists", Description: "Namespace ckad-team-x exists", Weight: 4,
-					CommandArgs: "get namespace ckad-team-x -o name", ExpectSubstring: "namespace/ckad-team-x"},
+				{ID: "ns-exists", Description: "Namespace mynamespace exists", Weight: 2, CommandArgs: "get namespace mynamespace -o name", ExpectSubstring: "namespace/mynamespace"},
+				{ID: "pod-exists", Description: "Pod nginx exists in mynamespace", Weight: 1, CommandArgs: "get pod nginx -n mynamespace -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "pod-image", Description: "Pod uses nginx image", Weight: 1, CommandArgs: "get pod nginx -n mynamespace -o jsonpath={.spec.containers[0].image}", ExpectSubstring: "nginx"},
 			},
-			Cleanup: []string{"delete namespace ckad-team-x --ignore-not-found"},
+			Cleanup: []string{"delete namespace mynamespace --ignore-not-found"},
 		},
 		{
-			ID:          "q-svc-clusterip",
-			Domain:      models.DomainServicesNetworking,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Expose a Deployment (ClusterIP)",
-			Description: "ClusterIP Services give a stable virtual IP for a set of Pods.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-svc"},
-				{Name: "deploy web", Namespace: "ckad-svc", YAML: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web
-  labels: {app: web}
-spec:
-  replicas: 2
-  selector: {matchLabels: {app: web}}
-  template:
-    metadata: {labels: {app: web}}
-    spec:
-      containers:
-        - name: web
-          image: nginx:1.25
-          ports: [{containerPort: 80}]
-`},
-			},
-			Task: "In namespace ckad-svc, expose Deployment web as a Service named web-svc of type ClusterIP on port 80 targeting container port 80.",
+			ID:          "dg-a02",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Busybox pod that runs env",
+			Description: "Pods can run a one-off command instead of a long-running server.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-a02"}},
+			Task:        "In namespace ckad-a02, create a Pod named 'busybox' using image 'busybox' that runs the command 'env' (restart=Never).",
 			Hints: []string{
-				"kubectl expose deployment web --name=web-svc --port=80 --target-port=80 -n ckad-svc",
+				"kubectl run busybox --image=busybox --restart=Never -n ckad-a02 -- env",
+				"Use --command to override the container command.",
 			},
-			Solution: `kubectl expose deployment web --name=web-svc --port=80 --target-port=80 -n ckad-svc`,
+			Solution: "kubectl run busybox --image=busybox --restart=Never -n ckad-a02 --command -- env",
 			Weight:   4,
 			Checks: []models.Check{
-				{ID: "svc-exists", Description: "Service web-svc exists", Weight: 1,
-					CommandArgs: "get svc web-svc -n ckad-svc -o name", ExpectSubstring: "service/web-svc"},
-				{ID: "svc-type", Description: "Type is ClusterIP", Weight: 1,
-					CommandArgs: "get svc web-svc -n ckad-svc -o jsonpath={.spec.type}", ExpectSubstring: "ClusterIP"},
-				{ID: "svc-port", Description: "Port 80", Weight: 1,
-					CommandArgs: "get svc web-svc -n ckad-svc -o jsonpath={.spec.ports[0].port}", ExpectSubstring: "80"},
-				{ID: "svc-target", Description: "targetPort 80", Weight: 1,
-					CommandArgs: "get svc web-svc -n ckad-svc -o jsonpath={.spec.ports[0].targetPort}", ExpectSubstring: "80"},
+				{ID: "pod-exists", Description: "Pod busybox exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-a02 -o name", ExpectSubstring: "pod/busybox"},
+				{ID: "pod-cmd", Description: "Pod runs env command", Weight: 2, CommandArgs: "get pod busybox -n ckad-a02 -o jsonpath={.spec.containers[0].command}", ExpectSubstring: "env"},
 			},
-			Cleanup: []string{"delete namespace ckad-svc --ignore-not-found"},
+			Cleanup: []string{"delete namespace ckad-a02 --ignore-not-found"},
 		},
 		{
-			ID:          "q-svc-nodeport",
-			Domain:      models.DomainServicesNetworking,
-			Difficulty:  models.DifficultyMedium,
-			Title:       "Expose a Deployment (NodePort)",
-			Description: "NodePort Services open a static port on every node for external traffic.",
-			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-np"},
-				{Name: "deploy web", Namespace: "ckad-np", YAML: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web
-  labels: {app: web}
-spec:
-  replicas: 1
-  selector: {matchLabels: {app: web}}
-  template:
-    metadata: {labels: {app: web}}
-    spec:
-      containers:
-        - name: web
-          image: nginx:1.25
-          ports: [{containerPort: 80}]
-`},
-			},
-			Task: "In namespace ckad-np, expose Deployment web as a Service named web-np of type NodePort on port 80 targeting container port 80.",
+			ID:          "dg-a03",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Nginx Pod exposing port 80",
+			Description: "Pods can declare which ports their containers expose.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-a03"}},
+			Task:        "In namespace ckad-a03, create a Pod named 'nginx' using image 'nginx' and expose container port 80 (restart=Never).",
 			Hints: []string{
-				"kubectl expose deployment web --name=web-np --type=NodePort --port=80 --target-port=80 -n ckad-np",
+				"kubectl run nginx --image=nginx --restart=Never --port=80 -n ckad-a03",
+				"Check with kubectl get pod nginx -o yaml and look for containerPort.",
 			},
-			Solution: `kubectl expose deployment web --name=web-np --type=NodePort --port=80 --target-port=80 -n ckad-np`,
+			Solution: "kubectl run nginx --image=nginx --restart=Never --port=80 -n ckad-a03",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-a03 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "port-80", Description: "Container exposes port 80", Weight: 2, CommandArgs: "get pod nginx -n ckad-a03 -o jsonpath={.spec.containers[0].ports[0].containerPort}", ExpectSubstring: "80"},
+			},
+			Cleanup: []string{"delete namespace ckad-a03 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-a04",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Pod with environment variable",
+			Description: "Environment variables inject configuration into containers.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-a04"}},
+			Task:        "In namespace ckad-a04, create a Pod named 'nginx' using image 'nginx' with an environment variable var1=val1 (restart=Never).",
+			Hints: []string{
+				"kubectl run nginx --image=nginx --restart=Never --env=var1=val1 -n ckad-a04",
+				"Verify with kubectl exec nginx -n ckad-a04 -- env | grep var1",
+			},
+			Solution: "kubectl run nginx --image=nginx --restart=Never --env=var1=val1 -n ckad-a04",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-a04 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "env-var", Description: "Env var1=val1 is set", Weight: 3, CommandArgs: "get pod nginx -n ckad-a04 -o jsonpath={.spec.containers[0].env[0].name}", ExpectSubstring: "var1"},
+			},
+			Cleanup: []string{"delete namespace ckad-a04 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-a05",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Busybox echo hello world",
+			Description: "Create a Pod that runs a one-off echo command.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-a05"}},
+			Task:        "In namespace ckad-a05, create a Pod named 'busybox' using image 'busybox' that echoes 'hello world' (command: echo hello world, restart=Never).",
+			Hints: []string{
+				"kubectl run busybox --image=busybox --restart=Never -n ckad-a05 -- /bin/sh -c 'echo hello world'",
+				"Use --command or append the command after --",
+			},
+			Solution: "kubectl run busybox --image=busybox --restart=Never -n ckad-a05 -- /bin/sh -c 'echo hello world'",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod busybox exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-a05 -o name", ExpectSubstring: "pod/busybox"},
+				{ID: "pod-image", Description: "Uses busybox image", Weight: 2, CommandArgs: "get pod busybox -n ckad-a05 -o jsonpath={.spec.containers[0].image}", ExpectSubstring: "busybox"},
+			},
+			Cleanup: []string{"delete namespace ckad-a05 --ignore-not-found"},
+		},
+		// =========================================================
+		// b.multi_container_pods (10%)
+		// =========================================================
+		{
+			ID:          "dg-b01",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with two busybox containers",
+			Description: "A Pod can hold multiple containers sharing network and storage.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-b01"}},
+			Task:        "In namespace ckad-b01, create a Pod named 'busybox' with two containers (both image busybox, command 'echo hello; sleep 3600') named 'busybox' and 'busybox2'.",
+			Hints: []string{
+				"Create a single-container Pod YAML with --dry-run=client -o yaml, then duplicate the container entry with a different name.",
+				"Both containers need args: [/bin/sh, -c, echo hello; sleep 3600]",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: busybox\n  namespace: ckad-b01\nspec:\n  containers:\n  - name: busybox\n    image: busybox\n    args: [/bin/sh, -c, 'echo hello; sleep 3600']\n  - name: busybox2\n    image: busybox\n    args: [/bin/sh, -c, 'echo hello; sleep 3600']\n  restartPolicy: Never",
 			Weight:   6,
 			Checks: []models.Check{
-				{ID: "svc-exists", Description: "Service web-np exists", Weight: 2,
-					CommandArgs: "get svc web-np -n ckad-np -o name", ExpectSubstring: "service/web-np"},
-				{ID: "svc-type", Description: "Type is NodePort", Weight: 2,
-					CommandArgs: "get svc web-np -n ckad-np -o jsonpath={.spec.type}", ExpectSubstring: "NodePort"},
-				{ID: "svc-port", Description: "Port 80", Weight: 2,
-					CommandArgs: "get svc web-np -n ckad-np -o jsonpath={.spec.ports[0].port}", ExpectSubstring: "80"},
+				{ID: "pod-exists", Description: "Pod busybox exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-b01 -o name", ExpectSubstring: "pod/busybox"},
+				{ID: "two-containers", Description: "Pod has 2 containers", Weight: 2, CommandArgs: "get pod busybox -n ckad-b01 -o jsonpath={.spec.containers[*].name}", ExpectRegex: "busybox.*busybox2|busybox2.*busybox"},
+				{ID: "second-container", Description: "Second container busybox2 exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-b01 -o jsonpath={.spec.containers[1].name}", ExpectSubstring: "busybox2"},
 			},
-			Cleanup: []string{"delete namespace ckad-np --ignore-not-found"},
+			Cleanup: []string{"delete namespace ckad-b01 --ignore-not-found"},
 		},
 		{
-			ID:          "q-ingress",
+			ID:          "dg-b02",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Init container sharing emptyDir with nginx",
+			Description: "Init containers run before app containers and can share volumes.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-b02"}},
+			Task:        "In namespace ckad-b02, create a Pod named 'box' with an nginx container (port 80, mount emptyDir 'vol' at /usr/share/nginx/html) and a busybox initContainer named 'box' that runs 'echo Test > /work-dir/index.html' mounting the same volume at /work-dir.",
+			Hints: []string{
+				"Define volumes: - name: vol, emptyDir: {}",
+				"initContainers and containers both mount the same volume with different mountPaths.",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: box\n  namespace: ckad-b02\nspec:\n  initContainers:\n  - name: box\n    image: busybox\n    args: [/bin/sh, -c, 'echo Test > /work-dir/index.html']\n    volumeMounts: [{name: vol, mountPath: /work-dir}]\n  containers:\n  - name: nginx\n    image: nginx\n    ports: [{containerPort: 80}]\n    volumeMounts: [{name: vol, mountPath: /usr/share/nginx/html}]\n  volumes: [{name: vol, emptyDir: {}}]",
+			Weight:   8,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod box exists", Weight: 2, CommandArgs: "get pod box -n ckad-b02 -o name", ExpectSubstring: "pod/box"},
+				{ID: "init-exists", Description: "Init container box exists", Weight: 2, CommandArgs: "get pod box -n ckad-b02 -o jsonpath={.spec.initContainers[0].name}", ExpectSubstring: "box"},
+				{ID: "vol-exists", Description: "Volume vol is emptyDir", Weight: 2, CommandArgs: "get pod box -n ckad-b02 -o jsonpath={.spec.volumes[0].name}", ExpectSubstring: "vol"},
+				{ID: "nginx-mount", Description: "nginx mounts at /usr/share/nginx/html", Weight: 2, CommandArgs: "get pod box -n ckad-b02 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/usr/share/nginx/html"},
+			},
+			Cleanup: []string{"delete namespace ckad-b02 --ignore-not-found"},
+		},
+		// =========================================================
+		// c.pod_design - Labels and Annotations
+		// =========================================================
+		{
+			ID:          "dg-c01",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Create 3 pods with label app=v1",
+			Description: "Labels group pods for selectors and services.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c01"}},
+			Task:        "In namespace ckad-c01, create 3 Pods named nginx1, nginx2, nginx3 (image nginx, restart=Never) each with label app=v1.",
+			Hints: []string{
+				"kubectl run nginx1 --image=nginx --restart=Never -l app=v1 -n ckad-c01 (repeat for 2,3)",
+				"Or use a loop: for i in 1 2 3; do kubectl run nginx$i --image=nginx --restart=Never -l app=v1 -n ckad-c01; done",
+			},
+			Solution: "for i in 1 2 3; do kubectl run nginx$i --image=nginx --restart=Never -l app=v1 -n ckad-c01; done",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod1-label", Description: "nginx1 has label app=v1", Weight: 2, CommandArgs: "get pod nginx1 -n ckad-c01 -o jsonpath={.metadata.labels.app}", ExpectSubstring: "v1"},
+				{ID: "pod2-label", Description: "nginx2 has label app=v1", Weight: 2, CommandArgs: "get pod nginx2 -n ckad-c01 -o jsonpath={.metadata.labels.app}", ExpectSubstring: "v1"},
+				{ID: "pod3-label", Description: "nginx3 has label app=v1", Weight: 2, CommandArgs: "get pod nginx3 -n ckad-c01 -o jsonpath={.metadata.labels.app}", ExpectSubstring: "v1"},
+			},
+			Cleanup: []string{"delete namespace ckad-c01 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c02",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Change label of nginx2 to app=v2",
+			Description: "Labels can be updated with --overwrite.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-c02"},
+				{Name: "create pods", CommandArgs: "run nginx1 --image=nginx --restart=Never -l app=v1 -n ckad-c02"},
+				{Name: "create pod2", CommandArgs: "run nginx2 --image=nginx --restart=Never -l app=v1 -n ckad-c02"},
+				{Name: "create pod3", CommandArgs: "run nginx3 --image=nginx --restart=Never -l app=v1 -n ckad-c02"},
+			},
+			Task: "In namespace ckad-c02, 3 pods nginx1, nginx2, nginx3 already exist with label app=v1. Change the label of nginx2 to app=v2 (use --overwrite).",
+			Hints: []string{
+				"kubectl label pod nginx2 app=v2 --overwrite -n ckad-c02",
+				"Verify with kubectl get pods --show-labels -n ckad-c02",
+			},
+			Solution: "kubectl label pod nginx2 app=v2 --overwrite -n ckad-c02",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "nginx2-v2", Description: "nginx2 now has app=v2", Weight: 2, CommandArgs: "get pod nginx2 -n ckad-c02 -o jsonpath={.metadata.labels.app}", ExpectSubstring: "v2"},
+				{ID: "nginx1-v1", Description: "nginx1 still has app=v1", Weight: 1, CommandArgs: "get pod nginx1 -n ckad-c02 -o jsonpath={.metadata.labels.app}", ExpectSubstring: "v1"},
+				{ID: "nginx3-v1", Description: "nginx3 still has app=v1", Weight: 1, CommandArgs: "get pod nginx3 -n ckad-c02 -o jsonpath={.metadata.labels.app}", ExpectSubstring: "v1"},
+			},
+			Cleanup: []string{"delete namespace ckad-c02 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c03",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Annotate pods with description",
+			Description: "Annotations store non-identifying metadata.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-c03"},
+				{Name: "create pods", CommandArgs: "run nginx1 --image=nginx --restart=Never -n ckad-c03"},
+				{Name: "create pod2", CommandArgs: "run nginx2 --image=nginx --restart=Never -n ckad-c03"},
+				{Name: "create pod3", CommandArgs: "run nginx3 --image=nginx --restart=Never -n ckad-c03"},
+			},
+			Task: "In namespace ckad-c03, annotate pods nginx1, nginx2, nginx3 with annotation description='my description'.",
+			Hints: []string{
+				"kubectl annotate pod nginx1 nginx2 nginx3 description='my description' -n ckad-c03",
+				"Check with kubectl annotate pod nginx1 --list -n ckad-c03",
+			},
+			Solution: "kubectl annotate pod nginx1 nginx2 nginx3 description='my description' -n ckad-c03",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "ann1", Description: "nginx1 has annotation description", Weight: 2, CommandArgs: "get pod nginx1 -n ckad-c03 -o jsonpath={.metadata.annotations.description}", ExpectSubstring: "my description"},
+				{ID: "ann2", Description: "nginx2 has annotation description", Weight: 2, CommandArgs: "get pod nginx2 -n ckad-c03 -o jsonpath={.metadata.annotations.description}", ExpectSubstring: "my description"},
+				{ID: "ann3", Description: "nginx3 has annotation description", Weight: 2, CommandArgs: "get pod nginx3 -n ckad-c03 -o jsonpath={.metadata.annotations.description}", ExpectSubstring: "my description"},
+			},
+			Cleanup: []string{"delete namespace ckad-c03 --ignore-not-found"},
+		},
+		// =========================================================
+		// c.pod_design - Pod Placement
+		// =========================================================
+		{
+			ID:          "dg-c04",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with nodeSelector",
+			Description: "nodeSelector constrains pods to nodes with matching labels.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c04"}},
+			Task:        "In namespace ckad-c04, create a Pod named 'cuda-test' using image 'k8s.gcr.io/cuda-vector-add:v0.1' with nodeSelector accelerator=nvidia-tesla-p100.",
+			Hints: []string{
+				"Add nodeSelector under spec: accelerator: nvidia-tesla-p100",
+				"Use kubectl explain pod.spec to find the field.",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: cuda-test\n  namespace: ckad-c04\nspec:\n  containers:\n  - name: cuda-test\n    image: k8s.gcr.io/cuda-vector-add:v0.1\n  nodeSelector:\n    accelerator: nvidia-tesla-p100",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod cuda-test exists", Weight: 1, CommandArgs: "get pod cuda-test -n ckad-c04 -o name", ExpectSubstring: "pod/cuda-test"},
+				{ID: "nodeSelector", Description: "nodeSelector accelerator=nvidia-tesla-p100", Weight: 3, CommandArgs: "get pod cuda-test -n ckad-c04 -o jsonpath={.spec.nodeSelector.accelerator}", ExpectSubstring: "nvidia-tesla-p100"},
+			},
+			Cleanup: []string{"delete namespace ckad-c04 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c05",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with toleration for taint",
+			Description: "Tolerations allow pods to be scheduled onto tainted nodes.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c05"}},
+			Task:        "In namespace ckad-c05, create a Pod named 'frontend' using image 'nginx' that tolerates the taint key=tier value=frontend effect=NoSchedule (operator Equal).",
+			Hints: []string{
+				"Add tolerations: - key: tier, operator: Equal, value: frontend, effect: NoSchedule",
+				"Place tolerations under spec, sibling to containers.",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: frontend\n  namespace: ckad-c05\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n  tolerations:\n  - key: tier\n    operator: Equal\n    value: frontend\n    effect: NoSchedule",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod frontend exists", Weight: 1, CommandArgs: "get pod frontend -n ckad-c05 -o name", ExpectSubstring: "pod/frontend"},
+				{ID: "toleration-key", Description: "Toleration key tier", Weight: 1, CommandArgs: "get pod frontend -n ckad-c05 -o jsonpath={.spec.tolerations[0].key}", ExpectSubstring: "tier"},
+				{ID: "toleration-value", Description: "Toleration value frontend", Weight: 1, CommandArgs: "get pod frontend -n ckad-c05 -o jsonpath={.spec.tolerations[0].value}", ExpectSubstring: "frontend"},
+				{ID: "toleration-effect", Description: "Effect NoSchedule", Weight: 1, CommandArgs: "get pod frontend -n ckad-c05 -o jsonpath={.spec.tolerations[0].effect}", ExpectSubstring: "NoSchedule"},
+			},
+			Cleanup: []string{"delete namespace ckad-c05 --ignore-not-found"},
+		},
+		// =========================================================
+		// c.pod_design - Deployments
+		// =========================================================
+		{
+			ID:          "dg-c06",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Create deployment with 2 replicas",
+			Description: "Deployments manage replicated pods declaratively.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c06"}},
+			Task:        "In namespace ckad-c06, create a Deployment named 'nginx' using image nginx:1.18.0 with 2 replicas, exposing containerPort 80.",
+			Hints: []string{
+				"kubectl create deployment nginx --image=nginx:1.18.0 --replicas=2 --port=80 -n ckad-c06",
+				"Or create YAML with --dry-run=client -o yaml and edit replicas and ports.",
+			},
+			Solution: "kubectl create deployment nginx --image=nginx:1.18.0 --replicas=2 --port=80 -n ckad-c06",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "deploy-exists", Description: "Deployment nginx exists", Weight: 2, CommandArgs: "get deploy nginx -n ckad-c06 -o name", ExpectSubstring: "deployment.apps/nginx"},
+				{ID: "replicas", Description: "Has 2 replicas", Weight: 2, CommandArgs: "get deploy nginx -n ckad-c06 -o jsonpath={.spec.replicas}", ExpectSubstring: "2"},
+				{ID: "image", Description: "Uses nginx:1.18.0", Weight: 1, CommandArgs: "get deploy nginx -n ckad-c06 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.18.0"},
+				{ID: "port", Description: "Exposes port 80", Weight: 1, CommandArgs: "get deploy nginx -n ckad-c06 -o jsonpath={.spec.template.spec.containers[0].ports[0].containerPort}", ExpectSubstring: "80"},
+			},
+			Cleanup: []string{"delete namespace ckad-c06 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c07",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Update deployment image",
+			Description: "Deployments support rolling updates via set image.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-c07"},
+				{Name: "create deploy", CommandArgs: "create deployment nginx --image=nginx:1.18.0 --replicas=2 -n ckad-c07"},
+			},
+			Task: "In namespace ckad-c07, update the Deployment 'nginx' image from nginx:1.18.0 to nginx:1.19.8.",
+			Hints: []string{
+				"kubectl set image deployment/nginx nginx=nginx:1.19.8 -n ckad-c07",
+				"Or kubectl edit deployment nginx -n ckad-c07",
+			},
+			Solution: "kubectl set image deployment/nginx nginx=nginx:1.19.8 -n ckad-c07",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "image-updated", Description: "Image is nginx:1.19.8", Weight: 4, CommandArgs: "get deploy nginx -n ckad-c07 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.19.8"},
+			},
+			Cleanup: []string{"delete namespace ckad-c07 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c08",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Rollback a deployment",
+			Description: "Rollout undo reverts to the previous revision.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-c08"},
+				{Name: "deploy v1", Namespace: "ckad-c08", YAML: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: nginx\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app: nginx\n  template:\n    metadata:\n      labels:\n        app: nginx\n    spec:\n      containers:\n      - name: nginx\n        image: nginx:1.18.0\n        ports:\n        - containerPort: 80"},
+				{Name: "update to v2", CommandArgs: "set image deployment/nginx nginx=nginx:1.19.8 -n ckad-c08"},
+			},
+			Task: "In namespace ckad-c08, Deployment nginx was updated from nginx:1.18.0 to nginx:1.19.8. Roll it back to the previous revision (nginx:1.18.0).",
+			Hints: []string{
+				"kubectl rollout undo deployment/nginx -n ckad-c08",
+				"Verify with kubectl get deployment nginx -o jsonpath={.spec.template.spec.containers[0].image} -n ckad-c08",
+			},
+			Solution: "kubectl rollout undo deployment/nginx -n ckad-c08",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "rolled-back", Description: "Image rolled back to nginx:1.18.0", Weight: 4, CommandArgs: "get deploy nginx -n ckad-c08 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.18.0"},
+			},
+			Cleanup: []string{"delete namespace ckad-c08 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c09",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Scale deployment to 5 replicas",
+			Description: "Scaling changes the desired replica count.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-c09"},
+				{Name: "create deploy", CommandArgs: "create deployment nginx --image=nginx:1.18.0 --replicas=2 -n ckad-c09"},
+			},
+			Task: "In namespace ckad-c09, scale the Deployment 'nginx' to 5 replicas.",
+			Hints: []string{
+				"kubectl scale deployment/nginx --replicas=5 -n ckad-c09",
+				"Verify with kubectl get deployment nginx -n ckad-c09",
+			},
+			Solution: "kubectl scale deployment/nginx --replicas=5 -n ckad-c09",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "scaled", Description: "Deployment has 5 replicas", Weight: 4, CommandArgs: "get deploy nginx -n ckad-c09 -o jsonpath={.spec.replicas}", ExpectSubstring: "5"},
+			},
+			Cleanup: []string{"delete namespace ckad-c09 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c10",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Autoscale deployment with HPA",
+			Description: "HorizontalPodAutoscaler scales based on CPU utilization.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-c10"},
+				{Name: "create deploy", CommandArgs: "create deployment nginx --image=nginx:1.18.0 --replicas=2 -n ckad-c10"},
+			},
+			Task: "In namespace ckad-c10, autoscale the Deployment 'nginx' with min 5, max 10 pods, targeting 80% CPU utilization.",
+			Hints: []string{
+				"kubectl autoscale deployment nginx --min=5 --max=10 --cpu-percent=80 -n ckad-c10",
+				"Verify with kubectl get hpa -n ckad-c10",
+			},
+			Solution: "kubectl autoscale deployment nginx --min=5 --max=10 --cpu-percent=80 -n ckad-c10",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "hpa-exists", Description: "HPA nginx exists", Weight: 2, CommandArgs: "get hpa nginx -n ckad-c10 -o name", ExpectSubstring: "horizontalpodautoscaler.autoscaling/nginx"},
+				{ID: "hpa-min", Description: "Min replicas 5", Weight: 2, CommandArgs: "get hpa nginx -n ckad-c10 -o jsonpath={.spec.minReplicas}", ExpectSubstring: "5"},
+				{ID: "hpa-max", Description: "Max replicas 10", Weight: 2, CommandArgs: "get hpa nginx -n ckad-c10 -o jsonpath={.spec.maxReplicas}", ExpectSubstring: "10"},
+			},
+			Cleanup: []string{"delete namespace ckad-c10 --ignore-not-found"},
+		},
+		// =========================================================
+		// c.pod_design - Jobs
+		// =========================================================
+		{
+			ID:          "dg-c11",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Create a Job computing pi",
+			Description: "Jobs run pods to completion.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c11"}},
+			Task:        "In namespace ckad-c11, create a Job named 'pi' using image perl:5.34 that runs 'perl -Mbignum=bpi -wle print bpi(2000)'.",
+			Hints: []string{
+				"kubectl create job pi --image=perl:5.34 -n ckad-c11 -- perl -Mbignum=bpi -wle 'print bpi(2000)'",
+				"Verify with kubectl get jobs -n ckad-c11",
+			},
+			Solution: "kubectl create job pi --image=perl:5.34 -n ckad-c11 -- perl -Mbignum=bpi -wle 'print bpi(2000)'",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "job-exists", Description: "Job pi exists", Weight: 2, CommandArgs: "get job pi -n ckad-c11 -o name", ExpectSubstring: "job.batch/pi"},
+				{ID: "job-image", Description: "Uses perl:5.34", Weight: 2, CommandArgs: "get job pi -n ckad-c11 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "perl"},
+				{ID: "job-cmd", Description: "Runs bpi command", Weight: 2, CommandArgs: "get job pi -n ckad-c11 -o jsonpath={.spec.template.spec.containers[0].args}", ExpectSubstring: "bpi"},
+			},
+			Cleanup: []string{"delete namespace ckad-c11 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c12",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Job that echoes hello and sleeps",
+			Description: "Jobs can run arbitrary shell commands.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c12"}},
+			Task:        "In namespace ckad-c12, create a Job named 'busybox' using image busybox that runs '/bin/sh -c echo hello; sleep 30; echo world'.",
+			Hints: []string{
+				"kubectl create job busybox --image=busybox -n ckad-c12 -- /bin/sh -c 'echo hello; sleep 30; echo world'",
+				"Check with kubectl get jobs -n ckad-c12",
+			},
+			Solution: "kubectl create job busybox --image=busybox -n ckad-c12 -- /bin/sh -c 'echo hello; sleep 30; echo world'",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "job-exists", Description: "Job busybox exists", Weight: 2, CommandArgs: "get job busybox -n ckad-c12 -o name", ExpectSubstring: "job.batch/busybox"},
+				{ID: "job-image", Description: "Uses busybox", Weight: 2, CommandArgs: "get job busybox -n ckad-c12 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "busybox"},
+			},
+			Cleanup: []string{"delete namespace ckad-c12 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c13",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Job with 5 completions",
+			Description: "completions controls how many times a Job must succeed.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c13"}},
+			Task:        "In namespace ckad-c13, create a Job named 'busybox' using image busybox that runs '/bin/sh -c echo hello; sleep 30; echo world' and completes 5 times (completions=5).",
+			Hints: []string{
+				"Create YAML with --dry-run=client -o yaml, then add spec.completions: 5",
+				"Verify with kubectl get job busybox -o jsonpath={.spec.completions} -n ckad-c13",
+			},
+			Solution: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: busybox\n  namespace: ckad-c13\nspec:\n  completions: 5\n  template:\n    spec:\n      containers:\n      - name: busybox\n        image: busybox\n        args: [/bin/sh, -c, 'echo hello; sleep 30; echo world']\n      restartPolicy: OnFailure",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "job-exists", Description: "Job busybox exists", Weight: 2, CommandArgs: "get job busybox -n ckad-c13 -o name", ExpectSubstring: "job.batch/busybox"},
+				{ID: "completions", Description: "Completions is 5", Weight: 2, CommandArgs: "get job busybox -n ckad-c13 -o jsonpath={.spec.completions}", ExpectSubstring: "5"},
+			},
+			Cleanup: []string{"delete namespace ckad-c13 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c14",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Job with parallelism 5",
+			Description: "parallelism runs multiple pods concurrently.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c14"}},
+			Task:        "In namespace ckad-c14, create a Job named 'busybox' using image busybox that runs '/bin/sh -c echo hello; sleep 30; echo world' with parallelism 5.",
+			Hints: []string{
+				"Add spec.parallelism: 5 to the Job YAML",
+				"kubectl create job busybox --image=busybox --dry-run=client -o yaml -- /bin/sh -c 'echo hello; sleep 30; echo world' > job.yaml, then edit",
+			},
+			Solution: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: busybox\n  namespace: ckad-c14\nspec:\n  parallelism: 5\n  template:\n    spec:\n      containers:\n      - name: busybox\n        image: busybox\n        args: [/bin/sh, -c, 'echo hello; sleep 30; echo world']\n      restartPolicy: OnFailure",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "job-exists", Description: "Job busybox exists", Weight: 2, CommandArgs: "get job busybox -n ckad-c14 -o name", ExpectSubstring: "job.batch/busybox"},
+				{ID: "parallelism", Description: "Parallelism is 5", Weight: 2, CommandArgs: "get job busybox -n ckad-c14 -o jsonpath={.spec.parallelism}", ExpectSubstring: "5"},
+			},
+			Cleanup: []string{"delete namespace ckad-c14 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c15",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Job with activeDeadlineSeconds",
+			Description: "activeDeadlineSeconds terminates a Job if it runs too long.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c15"}},
+			Task:        "In namespace ckad-c15, create a Job named 'busybox' using image busybox that runs 'while true; do echo hello; sleep 10; done' and will be terminated if it takes more than 30 seconds (activeDeadlineSeconds=30).",
+			Hints: []string{
+				"Add spec.activeDeadlineSeconds: 30",
+				"Command: /bin/sh -c 'while true; do echo hello; sleep 10; done'",
+			},
+			Solution: "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: busybox\n  namespace: ckad-c15\nspec:\n  activeDeadlineSeconds: 30\n  template:\n    spec:\n      containers:\n      - name: busybox\n        image: busybox\n        args: [/bin/sh, -c, 'while true; do echo hello; sleep 10; done']\n      restartPolicy: Never",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "job-exists", Description: "Job busybox exists", Weight: 2, CommandArgs: "get job busybox -n ckad-c15 -o name", ExpectSubstring: "job.batch/busybox"},
+				{ID: "deadline", Description: "activeDeadlineSeconds is 30", Weight: 2, CommandArgs: "get job busybox -n ckad-c15 -o jsonpath={.spec.activeDeadlineSeconds}", ExpectSubstring: "30"},
+			},
+			Cleanup: []string{"delete namespace ckad-c15 --ignore-not-found"},
+		},
+		// =========================================================
+		// c.pod_design - CronJobs
+		// =========================================================
+		{
+			ID:          "dg-c16",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Create a CronJob every minute",
+			Description: "CronJobs schedule Jobs using cron syntax.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c16"}},
+			Task:        "In namespace ckad-c16, create a CronJob named 'busybox' using image busybox that runs every minute (*/1 * * * *) with command '/bin/sh -c date; echo Hello from the Kubernetes cluster'.",
+			Hints: []string{
+				"kubectl create cronjob busybox --image=busybox --schedule='*/1 * * * *' -n ckad-c16 -- /bin/sh -c 'date; echo Hello from the Kubernetes cluster'",
+				"Verify with kubectl get cronjobs -n ckad-c16",
+			},
+			Solution: "kubectl create cronjob busybox --image=busybox --schedule='*/1 * * * *' -n ckad-c16 -- /bin/sh -c 'date; echo Hello from the Kubernetes cluster'",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "cj-exists", Description: "CronJob busybox exists", Weight: 2, CommandArgs: "get cronjob busybox -n ckad-c16 -o name", ExpectSubstring: "cronjob.batch/busybox"},
+				{ID: "schedule", Description: "Schedule is */1 * * * *", Weight: 2, CommandArgs: "get cronjob busybox -n ckad-c16 -o jsonpath={.spec.schedule}", ExpectSubstring: "*/1 * * * *"},
+				{ID: "image", Description: "Uses busybox", Weight: 2, CommandArgs: "get cronjob busybox -n ckad-c16 -o jsonpath={.spec.jobTemplate.spec.template.spec.containers[0].image}", ExpectSubstring: "busybox"},
+			},
+			Cleanup: []string{"delete namespace ckad-c16 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c17",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "CronJob with startingDeadlineSeconds",
+			Description: "startingDeadlineSeconds limits how late a CronJob can start after its schedule.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c17"}},
+			Task:        "In namespace ckad-c17, create a CronJob named 'time-limited-job' using image busybox that runs every minute ('* * * * *') with command '/bin/sh -c date; echo Hello from the Kubernetes cluster' and startingDeadlineSeconds=17.",
+			Hints: []string{
+				"Create YAML with --dry-run=client -o yaml, then add spec.startingDeadlineSeconds: 17",
+				"Verify with kubectl get cronjob time-limited-job -o jsonpath={.spec.startingDeadlineSeconds} -n ckad-c17",
+			},
+			Solution: "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: time-limited-job\n  namespace: ckad-c17\nspec:\n  schedule: '* * * * *'\n  startingDeadlineSeconds: 17\n  jobTemplate:\n    spec:\n      template:\n        spec:\n          containers:\n          - name: time-limited-job\n            image: busybox\n            args: [/bin/sh, -c, 'date; echo Hello from the Kubernetes cluster']\n          restartPolicy: OnFailure",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "cj-exists", Description: "CronJob time-limited-job exists", Weight: 2, CommandArgs: "get cronjob time-limited-job -n ckad-c17 -o name", ExpectSubstring: "cronjob.batch/time-limited-job"},
+				{ID: "deadline", Description: "startingDeadlineSeconds is 17", Weight: 2, CommandArgs: "get cronjob time-limited-job -n ckad-c17 -o jsonpath={.spec.startingDeadlineSeconds}", ExpectSubstring: "17"},
+			},
+			Cleanup: []string{"delete namespace ckad-c17 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-c18",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "CronJob with history limits",
+			Description: "History limits control how many completed Jobs are retained.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-c18"}},
+			Task:        "In namespace ckad-c18, create a CronJob named 'history-demo' using image busybox that runs every minute ('*/1 * * * *') with command '/bin/sh -c date; echo Hello from history demo' and keeps only the last 2 successful and 1 failed Jobs (successfulJobsHistoryLimit=2, failedJobsHistoryLimit=1).",
+			Hints: []string{
+				"Add spec.successfulJobsHistoryLimit: 2 and spec.failedJobsHistoryLimit: 1",
+				"kubectl create cronjob history-demo --image=busybox --schedule='*/1 * * * *' --dry-run=client -o yaml -- /bin/sh -c 'date; echo Hello from history demo' > cj.yaml, then edit",
+			},
+			Solution: "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: history-demo\n  namespace: ckad-c18\nspec:\n  schedule: '*/1 * * * *'\n  successfulJobsHistoryLimit: 2\n  failedJobsHistoryLimit: 1\n  jobTemplate:\n    spec:\n      template:\n        spec:\n          containers:\n          - name: history-demo\n            image: busybox\n            args: [/bin/sh, -c, 'date; echo Hello from history demo']\n          restartPolicy: OnFailure",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "cj-exists", Description: "CronJob history-demo exists", Weight: 2, CommandArgs: "get cronjob history-demo -n ckad-c18 -o name", ExpectSubstring: "cronjob.batch/history-demo"},
+				{ID: "success-limit", Description: "successfulJobsHistoryLimit is 2", Weight: 2, CommandArgs: "get cronjob history-demo -n ckad-c18 -o jsonpath={.spec.successfulJobsHistoryLimit}", ExpectSubstring: "2"},
+				{ID: "failed-limit", Description: "failedJobsHistoryLimit is 1", Weight: 2, CommandArgs: "get cronjob history-demo -n ckad-c18 -o jsonpath={.spec.failedJobsHistoryLimit}", ExpectSubstring: "1"},
+			},
+			Cleanup: []string{"delete namespace ckad-c18 --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - ConfigMaps
+		// =========================================================
+		{
+			ID:          "dg-d01",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Create ConfigMap with literals",
+			Description: "ConfigMaps store non-confidential key-value configuration.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-d01"}},
+			Task:        "In namespace ckad-d01, create a ConfigMap named 'config' with values foo=lala and foo2=lolo.",
+			Hints: []string{
+				"kubectl create configmap config --from-literal=foo=lala --from-literal=foo2=lolo -n ckad-d01",
+				"Verify with kubectl get configmap config -o yaml -n ckad-d01",
+			},
+			Solution: "kubectl create configmap config --from-literal=foo=lala --from-literal=foo2=lolo -n ckad-d01",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "cm-exists", Description: "ConfigMap config exists", Weight: 1, CommandArgs: "get configmap config -n ckad-d01 -o name", ExpectSubstring: "configmap/config"},
+				{ID: "foo", Description: "Has foo=lala", Weight: 1, CommandArgs: "get configmap config -n ckad-d01 -o jsonpath={.data.foo}", ExpectSubstring: "lala"},
+				{ID: "foo2", Description: "Has foo2=lolo", Weight: 2, CommandArgs: "get configmap config -n ckad-d01 -o jsonpath={.data.foo2}", ExpectSubstring: "lolo"},
+			},
+			Cleanup: []string{"delete namespace ckad-d01 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d02",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod consuming ConfigMap as env var",
+			Description: "Pods can inject ConfigMap keys as environment variables.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-d02"},
+				{Name: "create configmap", CommandArgs: "create configmap options --from-literal=var5=val5 -n ckad-d02"},
+			},
+			Task: "In namespace ckad-d02, a ConfigMap 'options' with var5=val5 already exists. Create a Pod named 'nginx' using image nginx that loads var5 into an env variable called 'option' (use configMapKeyRef).",
+			Hints: []string{
+				"Under spec.containers[0].env: - name: option, valueFrom: {configMapKeyRef: {name: options, key: var5}}",
+				"Create YAML with --dry-run=client -o yaml and edit.",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d02\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    env:\n    - name: option\n      valueFrom:\n        configMapKeyRef:\n          name: options\n          key: var5",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-d02 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "env-name", Description: "Env var option exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-d02 -o jsonpath={.spec.containers[0].env[0].name}", ExpectSubstring: "option"},
+				{ID: "env-ref", Description: "References configMap options key var5", Weight: 2, CommandArgs: "get pod nginx -n ckad-d02 -o jsonpath={.spec.containers[0].env[0].valueFrom.configMapKeyRef.key}", ExpectSubstring: "var5"},
+			},
+			Cleanup: []string{"delete namespace ckad-d02 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d03",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod consuming ConfigMap via envFrom",
+			Description: "envFrom loads all keys from a ConfigMap as env vars.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-d03"},
+				{Name: "create configmap", CommandArgs: "create configmap anotherone --from-literal=var6=val6 --from-literal=var7=val7 -n ckad-d03"},
+			},
+			Task: "In namespace ckad-d03, a ConfigMap 'anotherone' with var6=val6 and var7=val7 already exists. Create a Pod named 'nginx' using image nginx that loads the entire ConfigMap as env variables (use envFrom + configMapRef).",
+			Hints: []string{
+				"Use envFrom: - configMapRef: {name: anotherone}",
+				"envFrom is sibling to env, not nested inside it.",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d03\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    envFrom:\n    - configMapRef:\n        name: anotherone",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-d03 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "envFrom", Description: "Uses envFrom configMapRef anotherone", Weight: 2, CommandArgs: "get pod nginx -n ckad-d03 -o jsonpath={.spec.containers[0].envFrom[0].configMapRef.name}", ExpectSubstring: "anotherone"},
+			},
+			Cleanup: []string{"delete namespace ckad-d03 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d04",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod mounting ConfigMap as volume",
+			Description: "ConfigMaps can be mounted as volumes to expose keys as files.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-d04"},
+				{Name: "create configmap", CommandArgs: "create configmap cmvolume --from-literal=var8=val8 --from-literal=var9=val9 -n ckad-d04"},
+			},
+			Task: "In namespace ckad-d04, a ConfigMap 'cmvolume' with var8=val8 and var9=val9 already exists. Create a Pod named 'nginx' using image nginx that mounts the ConfigMap as a volume at /etc/lala (volume name myvolume).",
+			Hints: []string{
+				"Define volumes: - name: myvolume, configMap: {name: cmvolume}",
+				"Mount it: volumeMounts: - name: myvolume, mountPath: /etc/lala",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d04\nspec:\n  volumes:\n  - name: myvolume\n    configMap:\n      name: cmvolume\n  containers:\n  - name: nginx\n    image: nginx\n    volumeMounts:\n    - name: myvolume\n      mountPath: /etc/lala",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-d04 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "volume", Description: "Volume myvolume from ConfigMap cmvolume", Weight: 2, CommandArgs: "get pod nginx -n ckad-d04 -o jsonpath={.spec.volumes[0].configMap.name}", ExpectSubstring: "cmvolume"},
+				{ID: "mount", Description: "Mounts at /etc/lala", Weight: 2, CommandArgs: "get pod nginx -n ckad-d04 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/etc/lala"},
+			},
+			Cleanup: []string{"delete namespace ckad-d04 --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - SecurityContext
+		// =========================================================
+		{
+			ID:          "dg-d05",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with runAsUser 101",
+			Description: "SecurityContext controls user and privilege settings.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-d05"}},
+			Task:        "In namespace ckad-d05, create a Pod named 'nginx' using image nginx that runs with user ID 101 (spec.securityContext.runAsUser).",
+			Hints: []string{
+				"Add securityContext: {runAsUser: 101} under spec (pod-level)",
+				"Verify with kubectl get pod nginx -o jsonpath={.spec.securityContext.runAsUser} -n ckad-d05",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d05\nspec:\n  securityContext:\n    runAsUser: 101\n  containers:\n  - name: nginx\n    image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-d05 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "runAsUser", Description: "runAsUser is 101", Weight: 3, CommandArgs: "get pod nginx -n ckad-d05 -o jsonpath={.spec.securityContext.runAsUser}", ExpectSubstring: "101"},
+			},
+			Cleanup: []string{"delete namespace ckad-d05 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d06",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with added capabilities",
+			Description: "Capabilities grant fine-grained privileges to containers.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-d06"}},
+			Task:        "In namespace ckad-d06, create a Pod named 'nginx' using image nginx whose single container has capabilities NET_ADMIN and SYS_TIME added (container securityContext).",
+			Hints: []string{
+				"Add securityContext.capabilities.add: [NET_ADMIN, SYS_TIME] under the container",
+				"Use kubectl explain pod.spec.containers.securityContext.capabilities",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d06\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    securityContext:\n      capabilities:\n        add: [NET_ADMIN, SYS_TIME]",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-d06 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "cap-net", Description: "Has NET_ADMIN capability", Weight: 1, CommandArgs: "get pod nginx -n ckad-d06 -o jsonpath={.spec.containers[0].securityContext.capabilities.add}", ExpectSubstring: "NET_ADMIN"},
+				{ID: "cap-sys", Description: "Has SYS_TIME capability", Weight: 2, CommandArgs: "get pod nginx -n ckad-d06 -o jsonpath={.spec.containers[0].securityContext.capabilities.add}", ExpectSubstring: "SYS_TIME"},
+			},
+			Cleanup: []string{"delete namespace ckad-d06 --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - Resources
+		// =========================================================
+		{
+			ID:          "dg-d07",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with resource requests and limits",
+			Description: "Requests guarantee resources; limits cap consumption.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-d07"}},
+			Task:        "In namespace ckad-d07, create a Pod named 'nginx' using image nginx with requests cpu=100m memory=256Mi and limits cpu=200m memory=512Mi.",
+			Hints: []string{
+				"Under container resources: requests: {cpu: 100m, memory: 256Mi}, limits: {cpu: 200m, memory: 512Mi}",
+				"Verify with kubectl get pod nginx -o jsonpath={.spec.containers[0].resources} -n ckad-d07",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d07\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    resources:\n      requests:\n        cpu: 100m\n        memory: 256Mi\n      limits:\n        cpu: 200m\n        memory: 512Mi",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "req-cpu", Description: "Requests cpu 100m", Weight: 1, CommandArgs: "get pod nginx -n ckad-d07 -o jsonpath={.spec.containers[0].resources.requests.cpu}", ExpectSubstring: "100m"},
+				{ID: "req-mem", Description: "Requests memory 256Mi", Weight: 1, CommandArgs: "get pod nginx -n ckad-d07 -o jsonpath={.spec.containers[0].resources.requests.memory}", ExpectSubstring: "256Mi"},
+				{ID: "lim-cpu", Description: "Limits cpu 200m", Weight: 1, CommandArgs: "get pod nginx -n ckad-d07 -o jsonpath={.spec.containers[0].resources.limits.cpu}", ExpectSubstring: "200m"},
+				{ID: "lim-mem", Description: "Limits memory 512Mi", Weight: 1, CommandArgs: "get pod nginx -n ckad-d07 -o jsonpath={.spec.containers[0].resources.limits.memory}", ExpectSubstring: "512Mi"},
+			},
+			Cleanup: []string{"delete namespace ckad-d07 --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - LimitRange
+		// =========================================================
+		{
+			ID:          "dg-d08",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "LimitRange for memory",
+			Description: "LimitRanges enforce min/max constraints per Pod/Container.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace limitrange"}},
+			Task:        "In namespace 'limitrange', create a LimitRange named 'ns-memory-limit' that limits Pod memory to max 500Mi and min 100Mi (type Pod).",
+			Hints: []string{
+				"apiVersion: v1, kind: LimitRange, spec.limits: [{type: Pod, max: {memory: 500Mi}, min: {memory: 100Mi}}]",
+				"Verify with kubectl describe limitrange ns-memory-limit -n limitrange",
+			},
+			Solution: "apiVersion: v1\nkind: LimitRange\nmetadata:\n  name: ns-memory-limit\n  namespace: limitrange\nspec:\n  limits:\n  - type: Pod\n    max:\n      memory: 500Mi\n    min:\n      memory: 100Mi",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "lr-exists", Description: "LimitRange ns-memory-limit exists", Weight: 2, CommandArgs: "get limitrange ns-memory-limit -n limitrange -o name", ExpectSubstring: "limitrange/ns-memory-limit"},
+				{ID: "lr-max", Description: "Max memory 500Mi", Weight: 1, CommandArgs: "get limitrange ns-memory-limit -n limitrange -o jsonpath={.spec.limits[0].max.memory}", ExpectSubstring: "500Mi"},
+				{ID: "lr-min", Description: "Min memory 100Mi", Weight: 1, CommandArgs: "get limitrange ns-memory-limit -n limitrange -o jsonpath={.spec.limits[0].min.memory}", ExpectSubstring: "100Mi"},
+			},
+			Cleanup: []string{"delete namespace limitrange --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - ResourceQuota
+		// =========================================================
+		{
+			ID:          "dg-d09",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "ResourceQuota in namespace one",
+			Description: "ResourceQuotas cap aggregate resource consumption per namespace.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace one"}},
+			Task:        "In namespace 'one', create a ResourceQuota named 'my-rq' with hard limits: requests.cpu=1, requests.memory=1Gi, limits.cpu=2, limits.memory=2Gi.",
+			Hints: []string{
+				"kubectl create quota my-rq --hard=requests.cpu=1,requests.memory=1Gi,limits.cpu=2,limits.memory=2Gi -n one",
+				"Or apply YAML with spec.hard containing those keys.",
+			},
+			Solution: "kubectl create quota my-rq --hard=requests.cpu=1,requests.memory=1Gi,limits.cpu=2,limits.memory=2Gi -n one",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "rq-exists", Description: "ResourceQuota my-rq exists", Weight: 2, CommandArgs: "get resourcequota my-rq -n one -o name", ExpectSubstring: "resourcequota/my-rq"},
+				{ID: "rq-cpu-req", Description: "requests.cpu is 1", Weight: 1, CommandArgs: "get resourcequota my-rq -n one -o jsonpath={.spec.hard.requests\\.cpu}", ExpectSubstring: "1"},
+				{ID: "rq-mem-req", Description: "requests.memory is 1Gi", Weight: 1, CommandArgs: "get resourcequota my-rq -n one -o jsonpath={.spec.hard.requests\\.memory}", ExpectSubstring: "1Gi"},
+				{ID: "rq-cpu-lim", Description: "limits.cpu is 2", Weight: 1, CommandArgs: "get resourcequota my-rq -n one -o jsonpath={.spec.hard.limits\\.cpu}", ExpectSubstring: "2"},
+				{ID: "rq-mem-lim", Description: "limits.memory is 2Gi", Weight: 1, CommandArgs: "get resourcequota my-rq -n one -o jsonpath={.spec.hard.limits\\.memory}", ExpectSubstring: "2Gi"},
+			},
+			Cleanup: []string{"delete namespace one --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - Secrets
+		// =========================================================
+		{
+			ID:          "dg-d10",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Create generic Secret",
+			Description: "Secrets store sensitive data base64-encoded.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-d10"}},
+			Task:        "In namespace ckad-d10, create a generic Secret named 'mysecret' with key password=mypass.",
+			Hints: []string{
+				"kubectl create secret generic mysecret --from-literal=password=mypass -n ckad-d10",
+				"Verify with kubectl get secret mysecret -o yaml -n ckad-d10",
+			},
+			Solution: "kubectl create secret generic mysecret --from-literal=password=mypass -n ckad-d10",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "secret-exists", Description: "Secret mysecret exists", Weight: 2, CommandArgs: "get secret mysecret -n ckad-d10 -o name", ExpectSubstring: "secret/mysecret"},
+				{ID: "secret-key", Description: "Has key password", Weight: 2, CommandArgs: "get secret mysecret -n ckad-d10 -o jsonpath={.data.password}", ExpectRegex: ".+"},
+			},
+			Cleanup: []string{"delete namespace ckad-d10 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d11",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod mounting Secret as volume",
+			Description: "Secrets can be mounted as volumes to expose keys as files.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-d11"},
+				{Name: "create secret", CommandArgs: "create secret generic mysecret2 --from-literal=username=admin -n ckad-d11"},
+			},
+			Task: "In namespace ckad-d11, a Secret 'mysecret2' with key username=admin already exists. Create a Pod named 'nginx' using image nginx that mounts the Secret as a volume at /etc/foo (volume name foo, secretName mysecret2).",
+			Hints: []string{
+				"volumes: - name: foo, secret: {secretName: mysecret2}",
+				"volumeMounts: - name: foo, mountPath: /etc/foo",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d11\nspec:\n  volumes:\n  - name: foo\n    secret:\n      secretName: mysecret2\n  containers:\n  - name: nginx\n    image: nginx\n    volumeMounts:\n    - name: foo\n      mountPath: /etc/foo",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-d11 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "vol-secret", Description: "Volume foo from secret mysecret2", Weight: 2, CommandArgs: "get pod nginx -n ckad-d11 -o jsonpath={.spec.volumes[0].secret.secretName}", ExpectSubstring: "mysecret2"},
+				{ID: "mount-path", Description: "Mounts at /etc/foo", Weight: 2, CommandArgs: "get pod nginx -n ckad-d11 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/etc/foo"},
+			},
+			Cleanup: []string{"delete namespace ckad-d11 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d12",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod consuming Secret as env var",
+			Description: "Secrets can be injected as environment variables via secretKeyRef.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-d12"},
+				{Name: "create secret", CommandArgs: "create secret generic mysecret2 --from-literal=username=admin -n ckad-d12"},
+			},
+			Task: "In namespace ckad-d12, a Secret 'mysecret2' with key username=admin already exists. Create a Pod named 'nginx' using image nginx that exposes the key 'username' as env var USERNAME (use secretKeyRef).",
+			Hints: []string{
+				"env: - name: USERNAME, valueFrom: {secretKeyRef: {name: mysecret2, key: username}}",
+				"Verify with kubectl exec nginx -n ckad-d12 -- env | grep USERNAME",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d12\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    env:\n    - name: USERNAME\n      valueFrom:\n        secretKeyRef:\n          name: mysecret2\n          key: username",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-d12 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "env-name", Description: "Env var USERNAME exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-d12 -o jsonpath={.spec.containers[0].env[0].name}", ExpectSubstring: "USERNAME"},
+				{ID: "env-ref", Description: "References secret mysecret2 key username", Weight: 2, CommandArgs: "get pod nginx -n ckad-d12 -o jsonpath={.spec.containers[0].env[0].valueFrom.secretKeyRef.key}", ExpectSubstring: "username"},
+			},
+			Cleanup: []string{"delete namespace ckad-d12 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d13",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Secret in secret-ops namespace",
+			Description: "Create a Secret with a specific key-value in a dedicated namespace.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace secret-ops"}},
+			Task:        "In namespace 'secret-ops', create a generic Secret named 'ext-service-secret' with key API_KEY=LmLHbYhsgWZwNifiqaRorH8T.",
+			Hints: []string{
+				"kubectl create secret generic ext-service-secret --from-literal=API_KEY=LmLHbYhsgWZwNifiqaRorH8T -n secret-ops",
+				"Verify with kubectl get secret ext-service-secret -o jsonpath={.data.API_KEY} -n secret-ops | base64 -d",
+			},
+			Solution: "kubectl create secret generic ext-service-secret --from-literal=API_KEY=LmLHbYhsgWZwNifiqaRorH8T -n secret-ops",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "secret-exists", Description: "Secret ext-service-secret exists", Weight: 2, CommandArgs: "get secret ext-service-secret -n secret-ops -o name", ExpectSubstring: "secret/ext-service-secret"},
+				{ID: "secret-key", Description: "Has key API_KEY", Weight: 2, CommandArgs: "get secret ext-service-secret -n secret-ops -o jsonpath={.data.API_KEY}", ExpectRegex: ".+"},
+			},
+			Cleanup: []string{"delete namespace secret-ops --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d14",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod consuming Secret as env in secret-ops-2",
+			Description: "Consume a Secret as an environment variable in a Pod.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace secret-ops-2"},
+				{Name: "create secret", CommandArgs: "create secret generic ext-service-secret --from-literal=API_KEY=LmLHbYhsgWZwNifiqaRorH8T -n secret-ops-2"},
+			},
+			Task: "In namespace 'secret-ops-2', a Secret 'ext-service-secret' with key API_KEY already exists. Create a Pod named 'consumer' using image nginx that exposes API_KEY as env var API_KEY via secretKeyRef.",
+			Hints: []string{
+				"env: - name: API_KEY, valueFrom: {secretKeyRef: {name: ext-service-secret, key: API_KEY}}",
+				"Verify with kubectl exec consumer -n secret-ops-2 -- env | grep API_KEY",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: consumer\n  namespace: secret-ops-2\nspec:\n  containers:\n  - name: consumer\n    image: nginx\n    env:\n    - name: API_KEY\n      valueFrom:\n        secretKeyRef:\n          name: ext-service-secret\n          key: API_KEY",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod consumer exists", Weight: 2, CommandArgs: "get pod consumer -n secret-ops-2 -o name", ExpectSubstring: "pod/consumer"},
+				{ID: "env-ref", Description: "Env API_KEY from secret ext-service-secret", Weight: 2, CommandArgs: "get pod consumer -n secret-ops-2 -o jsonpath={.spec.containers[0].env[0].valueFrom.secretKeyRef.name}", ExpectSubstring: "ext-service-secret"},
+			},
+			Cleanup: []string{"delete namespace secret-ops --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d15",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod mounting Secret as readOnly volume",
+			Description: "Secrets mounted as volumes can be readOnly.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace secret-ops-3"},
+				{Name: "create secret file", CommandArgs: "create secret generic my-secret --type=kubernetes.io/ssh-auth --from-literal=ssh-privatekey=dummykey -n secret-ops-3"},
+			},
+			Task: "In namespace 'secret-ops-3', a Secret 'my-secret' (type kubernetes.io/ssh-auth) with key ssh-privatekey already exists. Create a Pod named 'consumer' using image nginx that mounts the Secret as a volume at /var/app with readOnly: true (volume name foo).",
+			Hints: []string{
+				"volumes: - name: foo, secret: {secretName: my-secret}",
+				"volumeMounts: - name: foo, mountPath: /var/app, readOnly: true",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: consumer\n  namespace: secret-ops-3\nspec:\n  containers:\n  - name: consumer\n    image: nginx\n    volumeMounts:\n    - name: foo\n      mountPath: /var/app\n      readOnly: true\n  volumes:\n  - name: foo\n    secret:\n      secretName: my-secret",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod consumer exists", Weight: 2, CommandArgs: "get pod consumer -n secret-ops-3 -o name", ExpectSubstring: "pod/consumer"},
+				{ID: "vol-secret", Description: "Volume from secret my-secret", Weight: 2, CommandArgs: "get pod consumer -n secret-ops-3 -o jsonpath={.spec.volumes[0].secret.secretName}", ExpectSubstring: "my-secret"},
+				{ID: "mount-ro", Description: "Mount is readOnly at /var/app", Weight: 2, CommandArgs: "get pod consumer -n secret-ops-3 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/var/app"},
+			},
+			Cleanup: []string{"delete namespace secret-ops --ignore-not-found"},
+		},
+		// =========================================================
+		// d.configuration - ServiceAccounts
+		// =========================================================
+		{
+			ID:          "dg-d16",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Create ServiceAccount myuser",
+			Description: "ServiceAccounts provide identity for pods.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-d16"}},
+			Task:        "In namespace ckad-d16, create a ServiceAccount named 'myuser'.",
+			Hints: []string{
+				"kubectl create serviceaccount myuser -n ckad-d16",
+				"Verify with kubectl get serviceaccount myuser -n ckad-d16",
+			},
+			Solution: "kubectl create serviceaccount myuser -n ckad-d16",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "sa-exists", Description: "ServiceAccount myuser exists", Weight: 4, CommandArgs: "get serviceaccount myuser -n ckad-d16 -o name", ExpectSubstring: "serviceaccount/myuser"},
+			},
+			Cleanup: []string{"delete namespace ckad-d16 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-d17",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod using ServiceAccount myuser",
+			Description: "Pods can be bound to a specific ServiceAccount.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-d17"},
+				{Name: "create sa", CommandArgs: "create serviceaccount myuser -n ckad-d17"},
+			},
+			Task: "In namespace ckad-d17, a ServiceAccount 'myuser' already exists. Create a Pod named 'nginx' using image nginx that uses serviceAccountName myuser.",
+			Hints: []string{
+				"Add spec.serviceAccountName: myuser",
+				"Verify with kubectl get pod nginx -o jsonpath={.spec.serviceAccountName} -n ckad-d17",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-d17\nspec:\n  serviceAccountName: myuser\n  containers:\n  - name: nginx\n    image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-d17 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "sa-name", Description: "Uses serviceAccountName myuser", Weight: 2, CommandArgs: "get pod nginx -n ckad-d17 -o jsonpath={.spec.serviceAccountName}", ExpectSubstring: "myuser"},
+			},
+			Cleanup: []string{"delete namespace ckad-d17 --ignore-not-found"},
+		},
+		// =========================================================
+		// e.observability - Probes
+		// =========================================================
+		{
+			ID:          "dg-e01",
+			Domain:      models.DomainApplicationObservability,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with livenessProbe exec ls",
+			Description: "Liveness probes detect if a container is still alive.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-e01"}},
+			Task:        "In namespace ckad-e01, create a Pod named 'nginx' using image nginx with a livenessProbe that executes command 'ls'.",
+			Hints: []string{
+				"Add livenessProbe: {exec: {command: [ls]}} under the container",
+				"Verify with kubectl describe pod nginx -n ckad-e01 | grep -i liveness",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-e01\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    livenessProbe:\n      exec:\n        command: [ls]",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-e01 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "liveness", Description: "Has livenessProbe exec ls", Weight: 3, CommandArgs: "get pod nginx -n ckad-e01 -o jsonpath={.spec.containers[0].livenessProbe.exec.command}", ExpectSubstring: "ls"},
+			},
+			Cleanup: []string{"delete namespace ckad-e01 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-e02",
+			Domain:      models.DomainApplicationObservability,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with tuned livenessProbe",
+			Description: "Probes have initialDelay and period settings.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-e02"}},
+			Task:        "In namespace ckad-e02, create a Pod named 'nginx' using image nginx with a livenessProbe exec 'ls', initialDelaySeconds 5 and periodSeconds 5.",
+			Hints: []string{
+				"livenessProbe: {exec: {command: [ls]}, initialDelaySeconds: 5, periodSeconds: 5}",
+				"Use kubectl explain pod.spec.containers.livenessProbe",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-e02\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    livenessProbe:\n      exec:\n        command: [ls]\n      initialDelaySeconds: 5\n      periodSeconds: 5",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-e02 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "delay", Description: "initialDelaySeconds is 5", Weight: 2, CommandArgs: "get pod nginx -n ckad-e02 -o jsonpath={.spec.containers[0].livenessProbe.initialDelaySeconds}", ExpectSubstring: "5"},
+				{ID: "period", Description: "periodSeconds is 5", Weight: 2, CommandArgs: "get pod nginx -n ckad-e02 -o jsonpath={.spec.containers[0].livenessProbe.periodSeconds}", ExpectSubstring: "5"},
+			},
+			Cleanup: []string{"delete namespace ckad-e02 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-e03",
+			Domain:      models.DomainApplicationObservability,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with HTTP readinessProbe",
+			Description: "Readiness probes control whether a pod receives traffic.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-e03"}},
+			Task:        "In namespace ckad-e03, create a Pod named 'nginx' using image nginx (port 80) with a readinessProbe httpGet path / on port 80.",
+			Hints: []string{
+				"readinessProbe: {httpGet: {path: /, port: 80}}",
+				"Add ports: [{containerPort: 80}] to the container",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: ckad-e03\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    ports:\n    - containerPort: 80\n    readinessProbe:\n      httpGet:\n        path: /\n        port: 80",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 1, CommandArgs: "get pod nginx -n ckad-e03 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "probe-path", Description: "readinessProbe path /", Weight: 1, CommandArgs: "get pod nginx -n ckad-e03 -o jsonpath={.spec.containers[0].readinessProbe.httpGet.path}", ExpectSubstring: "/"},
+				{ID: "probe-port", Description: "readinessProbe port 80", Weight: 2, CommandArgs: "get pod nginx -n ckad-e03 -o jsonpath={.spec.containers[0].readinessProbe.httpGet.port}", ExpectSubstring: "80"},
+			},
+			Cleanup: []string{"delete namespace ckad-e03 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-e04",
+			Domain:      models.DomainApplicationObservability,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Busybox pod that logs continuously",
+			Description: "Logs are the primary observability signal for pods.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-e04"}},
+			Task:        "In namespace ckad-e04, create a Pod named 'busybox' using image busybox that runs 'i=0; while true; do echo \"$i: $(date)\"; i=$((i+1)); sleep 1; done' (restart=Never).",
+			Hints: []string{
+				"kubectl run busybox --image=busybox --restart=Never -n ckad-e04 -- /bin/sh -c 'i=0; while true; do echo \"$i: $(date)\"; i=$((i+1)); sleep 1; done'",
+				"Check logs with kubectl logs busybox -n ckad-e04",
+			},
+			Solution: "kubectl run busybox --image=busybox --restart=Never -n ckad-e04 -- /bin/sh -c 'i=0; while true; do echo \"$i: $(date)\"; i=$((i+1)); sleep 1; done'",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod busybox exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-e04 -o name", ExpectSubstring: "pod/busybox"},
+				{ID: "pod-image", Description: "Uses busybox", Weight: 2, CommandArgs: "get pod busybox -n ckad-e04 -o jsonpath={.spec.containers[0].image}", ExpectSubstring: "busybox"},
+			},
+			Cleanup: []string{"delete namespace ckad-e04 --ignore-not-found"},
+		},
+		// =========================================================
+		// f.services (13%)
+		// =========================================================
+		{
+			ID:          "dg-f01",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Pod and ClusterIP Service",
+			Description: "Services provide stable networking for pods.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-f01"}},
+			Task:        "In namespace ckad-f01, create a Pod named 'nginx' using image nginx with port 80, and expose it via a ClusterIP Service named 'nginx' on port 80.",
+			Hints: []string{
+				"kubectl run nginx --image=nginx --restart=Never --port=80 --expose -n ckad-f01",
+				"Or kubectl expose pod nginx --port=80 --name=nginx -n ckad-f01",
+			},
+			Solution: "kubectl run nginx --image=nginx --restart=Never --port=80 --expose -n ckad-f01",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n ckad-f01 -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "svc-exists", Description: "Service nginx exists", Weight: 2, CommandArgs: "get svc nginx -n ckad-f01 -o name", ExpectSubstring: "service/nginx"},
+				{ID: "svc-port", Description: "Service port 80", Weight: 2, CommandArgs: "get svc nginx -n ckad-f01 -o jsonpath={.spec.ports[0].port}", ExpectSubstring: "80"},
+			},
+			Cleanup: []string{"delete namespace ckad-f01 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-f02",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Convert ClusterIP to NodePort",
+			Description: "NodePort exposes a service on each node's IP.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-f02"},
+				{Name: "create pod+svc", CommandArgs: "run nginx --image=nginx --restart=Never --port=80 --expose -n ckad-f02"},
+			},
+			Task: "In namespace ckad-f02, a Pod 'nginx' and ClusterIP Service 'nginx' on port 80 already exist. Patch the Service to type NodePort.",
+			Hints: []string{
+				"kubectl patch svc nginx -p '{\"spec\":{\"type\":\"NodePort\"}}' -n ckad-f02",
+				"Or kubectl edit svc nginx -n ckad-f02 and change type to NodePort",
+			},
+			Solution: "kubectl patch svc nginx -p '{\"spec\":{\"type\":\"NodePort\"}}' -n ckad-f02",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "svc-type", Description: "Service type is NodePort", Weight: 4, CommandArgs: "get svc nginx -n ckad-f02 -o jsonpath={.spec.type}", ExpectSubstring: "NodePort"},
+			},
+			Cleanup: []string{"delete namespace ckad-f02 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-f03",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Deployment foo with 3 replicas",
+			Description: "Deployments manage replicated pods for services.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-f03"}},
+			Task:        "In namespace ckad-f03, create a Deployment named 'foo' using image 'dgkanatsios/simpleapp' with 3 replicas, exposing container port 8080, labelled app=foo.",
+			Hints: []string{
+				"kubectl create deployment foo --image=dgkanatsios/simpleapp --replicas=3 --port=8080 -n ckad-f03",
+				"Verify with kubectl get deployment foo -n ckad-f03",
+			},
+			Solution: "kubectl create deployment foo --image=dgkanatsios/simpleapp --replicas=3 --port=8080 -n ckad-f03",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "deploy-exists", Description: "Deployment foo exists", Weight: 2, CommandArgs: "get deploy foo -n ckad-f03 -o name", ExpectSubstring: "deployment.apps/foo"},
+				{ID: "replicas", Description: "Has 3 replicas", Weight: 2, CommandArgs: "get deploy foo -n ckad-f03 -o jsonpath={.spec.replicas}", ExpectSubstring: "3"},
+				{ID: "image", Description: "Uses dgkanatsios/simpleapp", Weight: 2, CommandArgs: "get deploy foo -n ckad-f03 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "dgkanatsios/simpleapp"},
+			},
+			Cleanup: []string{"delete namespace ckad-f03 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-f04",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Expose deployment on port 6262",
+			Description: "Services can map a different port to the container port.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-f04"},
+				{Name: "create deploy", CommandArgs: "create deployment foo --image=dgkanatsios/simpleapp --replicas=3 --port=8080 -n ckad-f04"},
+			},
+			Task: "In namespace ckad-f04, a Deployment 'foo' with 3 replicas on port 8080 already exists. Expose it via a Service named 'foo' on port 6262 targeting port 8080.",
+			Hints: []string{
+				"kubectl expose deployment foo --port=6262 --target-port=8080 --name=foo -n ckad-f04",
+				"Verify with kubectl get svc foo -n ckad-f04 and kubectl get endpoints foo -n ckad-f04",
+			},
+			Solution: "kubectl expose deployment foo --port=6262 --target-port=8080 --name=foo -n ckad-f04",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "svc-exists", Description: "Service foo exists", Weight: 2, CommandArgs: "get svc foo -n ckad-f04 -o name", ExpectSubstring: "service/foo"},
+				{ID: "svc-port", Description: "Service port 6262", Weight: 1, CommandArgs: "get svc foo -n ckad-f04 -o jsonpath={.spec.ports[0].port}", ExpectSubstring: "6262"},
+				{ID: "target-port", Description: "Target port 8080", Weight: 1, CommandArgs: "get svc foo -n ckad-f04 -o jsonpath={.spec.ports[0].targetPort}", ExpectSubstring: "8080"},
+			},
+			Cleanup: []string{"delete namespace ckad-f04 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-f05",
 			Domain:      models.DomainServicesNetworking,
 			Difficulty:  models.DifficultyHard,
-			Title:       "Create an Ingress",
-			Description: "Ingresses route external HTTP(S) traffic to Services by host and path.",
+			Title:       "NetworkPolicy allowing access=granted",
+			Description: "NetworkPolicies control pod-to-pod traffic.",
 			Prepare: []models.SetupStep{
-				{Name: "create namespace", CommandArgs: "create namespace ckad-ing"},
-				{Name: "deploy web + svc", Namespace: "ckad-ing", YAML: `apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: web
-spec:
-  replicas: 1
-  selector: {matchLabels: {app: web}}
-  template:
-    metadata: {labels: {app: web}}
-    spec:
-      containers:
-        - name: web
-          image: nginx:1.25
-          ports: [{containerPort: 80}]
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: web-svc
-spec:
-  selector: {app: web}
-  ports: [{port: 80, targetPort: 80}]
-`},
+				{Name: "create namespace", CommandArgs: "create namespace ckad-f05"},
+				{Name: "create deploy", CommandArgs: "create deployment nginx --image=nginx --replicas=2 -n ckad-f05"},
+				{Name: "expose", CommandArgs: "expose deployment nginx --port=80 -n ckad-f05"},
 			},
-			Task: "In namespace ckad-ing, create an Ingress named app-ingress routing host app.local (path /) to Service web-svc on port 80.",
+			Task: "In namespace ckad-f05, a Deployment 'nginx' (2 replicas) and Service 'nginx' on port 80 already exist. Create a NetworkPolicy named 'access-nginx' that allows ingress only from pods with label access=granted to pods with label app=nginx.",
 			Hints: []string{
-				"Use networking.k8s.io/v1 Ingress with rules[].host=app.local.",
-				"Backend: service {name: web-svc, port: {number: 80}}.",
+				"spec.podSelector.matchLabels.app=nginx, ingress.from.podSelector.matchLabels.access=granted",
+				"apiVersion: networking.k8s.io/v1, kind: NetworkPolicy",
 			},
-			Solution: `cat <<EOF | kubectl apply -n ckad-ing -f -
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: app-ingress
-spec:
-  rules:
-    - host: app.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: web-svc
-                port: {number: 80}
-EOF`,
-			Weight: 8,
+			Solution: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: access-nginx\n  namespace: ckad-f05\nspec:\n  podSelector:\n    matchLabels:\n      app: nginx\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          access: granted",
+			Weight:   6,
 			Checks: []models.Check{
-				{ID: "ing-exists", Description: "Ingress app-ingress exists", Weight: 2,
-					CommandArgs: "get ingress app-ingress -n ckad-ing -o name", ExpectSubstring: "ingress.networking.k8s.io/app-ingress"},
-				{ID: "ing-host", Description: "Host is app.local", Weight: 2,
-					CommandArgs: "get ingress app-ingress -n ckad-ing -o jsonpath={.spec.rules[0].host}", ExpectSubstring: "app.local"},
-				{ID: "ing-svc", Description: "Routes to web-svc", Weight: 2,
-					CommandArgs: "get ingress app-ingress -n ckad-ing -o jsonpath={.spec.rules[0].http.paths[0].backend.service.name}", ExpectSubstring: "web-svc"},
-				{ID: "ing-port", Description: "Backend port 80", Weight: 2,
-					CommandArgs: "get ingress app-ingress -n ckad-ing -o jsonpath={.spec.rules[0].http.paths[0].backend.service.port.number}", ExpectSubstring: "80"},
+				{ID: "netpol-exists", Description: "NetworkPolicy access-nginx exists", Weight: 2, CommandArgs: "get networkpolicy access-nginx -n ckad-f05 -o name", ExpectSubstring: "networkpolicy.networking.k8s.io/access-nginx"},
+				{ID: "pod-selector", Description: "Selects app=nginx", Weight: 2, CommandArgs: "get networkpolicy access-nginx -n ckad-f05 -o jsonpath={.spec.podSelector.matchLabels.app}", ExpectSubstring: "nginx"},
+				{ID: "ingress-label", Description: "Allows access=granted", Weight: 2, CommandArgs: "get networkpolicy access-nginx -n ckad-f05 -o jsonpath={.spec.ingress[0].from[0].podSelector.matchLabels.access}", ExpectSubstring: "granted"},
 			},
-			Cleanup: []string{"delete namespace ckad-ing --ignore-not-found"},
+			Cleanup: []string{"delete namespace ckad-f05 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-f06",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyHard,
+			Title:       "Ingress routing to nginx Service",
+			Description: "Ingress routes external HTTP traffic to Services.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-f06"},
+				{Name: "create deploy", CommandArgs: "create deployment nginx --image=nginx --port=80 -n ckad-f06"},
+				{Name: "expose", CommandArgs: "expose deployment nginx --port=80 --name=nginx -n ckad-f06"},
+			},
+			Task: "In namespace ckad-f06, a Deployment 'nginx' and Service 'nginx' on port 80 already exist. Create an Ingress named 'nginx-ingress' routing host nginx.example.com path / (Prefix) to Service nginx port 80.",
+			Hints: []string{
+				"apiVersion: networking.k8s.io/v1, kind: Ingress, spec.rules[0].host=nginx.example.com",
+				"backend.service.name=nginx, backend.service.port.number=80, pathType: Prefix",
+			},
+			Solution: "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: nginx-ingress\n  namespace: ckad-f06\nspec:\n  rules:\n  - host: nginx.example.com\n    http:\n      paths:\n      - path: /\n        pathType: Prefix\n        backend:\n          service:\n            name: nginx\n            port:\n              number: 80",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "ing-exists", Description: "Ingress nginx-ingress exists", Weight: 2, CommandArgs: "get ingress nginx-ingress -n ckad-f06 -o name", ExpectSubstring: "ingress.networking.k8s.io/nginx-ingress"},
+				{ID: "ing-host", Description: "Host is nginx.example.com", Weight: 2, CommandArgs: "get ingress nginx-ingress -n ckad-f06 -o jsonpath={.spec.rules[0].host}", ExpectSubstring: "nginx.example.com"},
+				{ID: "ing-svc", Description: "Routes to service nginx", Weight: 2, CommandArgs: "get ingress nginx-ingress -n ckad-f06 -o jsonpath={.spec.rules[0].http.paths[0].backend.service.name}", ExpectSubstring: "nginx"},
+			},
+			Cleanup: []string{"delete namespace ckad-f06 --ignore-not-found"},
+		},
+		// =========================================================
+		// g.state - Volumes and Persistence (8%)
+		// =========================================================
+		{
+			ID:          "dg-g01",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Two containers sharing emptyDir",
+			Description: "emptyDir volumes share data between containers in a Pod.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ckad-g01"}},
+			Task:        "In namespace ckad-g01, create a Pod named 'busybox' with two containers (both busybox, command sleep 3600) sharing an emptyDir volume 'myvolume' mounted at /etc/foo in both containers.",
+			Hints: []string{
+				"Define volumes: - name: myvolume, emptyDir: {}",
+				"Both containers need volumeMounts: - name: myvolume, mountPath: /etc/foo",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: busybox\n  namespace: ckad-g01\nspec:\n  containers:\n  - name: busybox\n    image: busybox\n    args: [/bin/sh, -c, 'sleep 3600']\n    volumeMounts: [{name: myvolume, mountPath: /etc/foo}]\n  - name: busybox2\n    image: busybox\n    args: [/bin/sh, -c, 'sleep 3600']\n    volumeMounts: [{name: myvolume, mountPath: /etc/foo}]\n  volumes:\n  - name: myvolume\n    emptyDir: {}",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod busybox exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-g01 -o name", ExpectSubstring: "pod/busybox"},
+				{ID: "vol-exists", Description: "Volume myvolume is emptyDir", Weight: 2, CommandArgs: "get pod busybox -n ckad-g01 -o jsonpath={.spec.volumes[0].name}", ExpectSubstring: "myvolume"},
+				{ID: "mount-both", Description: "Both containers mount at /etc/foo", Weight: 2, CommandArgs: "get pod busybox -n ckad-g01 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/etc/foo"},
+			},
+			Cleanup: []string{"delete namespace ckad-g01 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-g02",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "PersistentVolume with hostPath",
+			Description: "PersistentVolumes represent cluster storage.",
+			Prepare:     nil,
+			Task:        "Create a PersistentVolume named 'pv-g02' with capacity 10Gi, accessModes ReadWriteOnce and ReadWriteMany, storageClassName 'normal', hostPath '/etc/foo'.",
+			Hints: []string{
+				"kind: PersistentVolume, spec.capacity.storage: 10Gi, spec.accessModes: [ReadWriteOnce, ReadWriteMany]",
+				"spec.storageClassName: normal, spec.hostPath.path: /etc/foo",
+			},
+			Solution: "apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: pv-g02\nspec:\n  capacity:\n    storage: 10Gi\n  accessModes: [ReadWriteOnce, ReadWriteMany]\n  storageClassName: normal\n  hostPath:\n    path: /etc/foo",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pv-exists", Description: "PV pv-g02 exists", Weight: 2, CommandArgs: "get pv pv-g02 -o name", ExpectSubstring: "persistentvolume/pv-g02"},
+				{ID: "pv-capacity", Description: "Capacity 10Gi", Weight: 2, CommandArgs: "get pv pv-g02 -o jsonpath={.spec.capacity.storage}", ExpectSubstring: "10Gi"},
+				{ID: "pv-path", Description: "hostPath /etc/foo", Weight: 2, CommandArgs: "get pv pv-g02 -o jsonpath={.spec.hostPath.path}", ExpectSubstring: "/etc/foo"},
+			},
+			Cleanup: []string{"delete pv myvolume --ignore-not-found"},
+		},
+		{
+			ID:          "dg-g03",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "PersistentVolumeClaim for pv-g03",
+			Description: "PVCs claim storage from PersistentVolumes.",
+			Prepare: []models.SetupStep{
+				{Name: "create pv", YAML: "apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: pv-g03\nspec:\n  capacity:\n    storage: 10Gi\n  accessModes: [ReadWriteOnce, ReadWriteMany]\n  storageClassName: normal\n  hostPath:\n    path: /etc/foo"},
+			},
+			Task: "A PersistentVolume 'pv-g03' (10Gi, hostPath /etc/foo, storageClass normal) already exists. Create a PersistentVolumeClaim named 'pvc-g03' requesting 4Gi with accessMode ReadWriteOnce and storageClassName normal.",
+			Hints: []string{
+				"kind: PersistentVolumeClaim, spec.resources.requests.storage: 4Gi",
+				"spec.accessModes: [ReadWriteOnce], spec.storageClassName: normal",
+			},
+			Solution: "apiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: pvc-g03\nspec:\n  accessModes: [ReadWriteOnce]\n  storageClassName: normal\n  resources:\n    requests:\n      storage: 4Gi",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pvc-exists", Description: "PVC pvc-g03 exists", Weight: 2, CommandArgs: "get pvc pvc-g03 -o name", ExpectSubstring: "persistentvolumeclaim/pvc-g03"},
+				{ID: "pvc-size", Description: "Requests 4Gi", Weight: 2, CommandArgs: "get pvc pvc-g03 -o jsonpath={.spec.resources.requests.storage}", ExpectSubstring: "4Gi"},
+			},
+			Cleanup: []string{"delete pvc mypvc --ignore-not-found", "delete pv myvolume --ignore-not-found"},
+		},
+		{
+			ID:          "dg-g04",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod mounting PVC at /etc/foo",
+			Description: "Pods mount PVCs to persist data.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-g04"},
+				{Name: "create pvc", Namespace: "ckad-g04", YAML: "apiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: mypvc\nspec:\n  accessModes: [ReadWriteOnce]\n  resources:\n    requests:\n      storage: 1Gi"},
+			},
+			Task: "In namespace ckad-g04, a PVC 'mypvc' (1Gi) already exists. Create a Pod named 'busybox' using image busybox with command 'sleep 3600' that mounts the PVC 'mypvc' at /etc/foo (volume name myvolume).",
+			Hints: []string{
+				"volumes: - name: myvolume, persistentVolumeClaim: {claimName: mypvc}",
+				"volumeMounts: - name: myvolume, mountPath: /etc/foo",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: busybox\n  namespace: ckad-g04\nspec:\n  containers:\n  - name: busybox\n    image: busybox\n    args: [/bin/sh, -c, 'sleep 3600']\n    volumeMounts: [{name: myvolume, mountPath: /etc/foo}]\n  volumes:\n  - name: myvolume\n    persistentVolumeClaim:\n      claimName: mypvc",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod busybox exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-g04 -o name", ExpectSubstring: "pod/busybox"},
+				{ID: "vol-pvc", Description: "Volume from PVC mypvc", Weight: 2, CommandArgs: "get pod busybox -n ckad-g04 -o jsonpath={.spec.volumes[0].persistentVolumeClaim.claimName}", ExpectSubstring: "mypvc"},
+				{ID: "mount-path", Description: "Mounts at /etc/foo", Weight: 2, CommandArgs: "get pod busybox -n ckad-g04 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/etc/foo"},
+			},
+			Cleanup: []string{"delete namespace ckad-g04 --ignore-not-found"},
+		},
+		{
+			ID:          "dg-g05",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Copy file from Pod with kubectl cp",
+			Description: "kubectl cp copies files between local and pod filesystems.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ckad-g05"},
+				{Name: "create pod", Namespace: "ckad-g05", YAML: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: busybox\nspec:\n  containers:\n  - name: busybox\n    image: busybox\n    args: [/bin/sh, -c, 'sleep 3600']"},
+			},
+			Task: "In namespace ckad-g05, a Pod 'busybox' (busybox, sleep 3600) is already running. The task is to demonstrate you can copy /etc/passwd from the pod locally. For grading, ensure the Pod still exists and is running.",
+			Hints: []string{
+				"kubectl cp ckad-g05/busybox:/etc/passwd ./passwd -n ckad-g05",
+				"This task is verified by checking the Pod is still present; practice the cp command in the terminal.",
+			},
+			Solution: "kubectl cp ckad-g05/busybox:/etc/passwd ./passwd",
+			Weight:   2,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod busybox still exists", Weight: 2, CommandArgs: "get pod busybox -n ckad-g05 -o name", ExpectSubstring: "pod/busybox"},
+			},
+			Cleanup: []string{"delete namespace ckad-g05 --ignore-not-found"},
+		},
+
+		// =========================================================
+		// jamesbuckett/ckad-questions - Additional coverage
+		// =========================================================
+		{
+			ID:          "jb-01-02",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Pod with custom container name",
+			Description: "Pods can have a container name different from the pod name.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace pod-namespace"}},
+			Task:        "In namespace pod-namespace, create a Pod named 'pod-1' using image 'nginx' with container name 'container-1' (restart=Never).",
+			Hints: []string{
+				"Use --dry-run=client -o yaml and edit spec.containers[0].name to container-1",
+				"Verify with kubectl get pod pod-1 -o jsonpath={.spec.containers[0].name} -n pod-namespace",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: pod-1\n  namespace: pod-namespace\nspec:\n  containers:\n  - name: container-1\n    image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod pod-1 exists", Weight: 2, CommandArgs: "get pod pod-1 -n pod-namespace -o name", ExpectSubstring: "pod/pod-1"},
+				{ID: "container-name", Description: "Container name is container-1", Weight: 2, CommandArgs: "get pod pod-1 -n pod-namespace -o jsonpath={.spec.containers[0].name}", ExpectSubstring: "container-1"},
+			},
+			Cleanup: []string{"delete namespace pod-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-01-03",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "PV, PVC and Pod storage chain",
+			Description: "A complete storage chain: PV -> PVC -> Pod mount.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace storage-namespace"}},
+			Task:        "In namespace storage-namespace, create a PersistentVolume named 'my-pv' with 5Gi hostPath /mnt/my-host storageClass manual, a PVC named 'my-pvc' with 2Gi storageClass manual, and a Pod named 'storage-pod' (nginx) mounting the PVC at /my-mount (volume my-volume).",
+			Hints: []string{
+				"PV: capacity 5Gi, accessModes ReadWriteOnce, hostPath /mnt/my-host, storageClassName manual",
+				"PVC: storage 2Gi, storageClassName manual; Pod: volumes.persistentVolumeClaim.claimName my-pvc, mountPath /my-mount",
+			},
+			Solution: "apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: my-pv\nspec:\n  capacity:\n    storage: 5Gi\n  accessModes: [ReadWriteOnce]\n  storageClassName: manual\n  hostPath:\n    path: /mnt/my-host\n---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: my-pvc\n  namespace: storage-namespace\nspec:\n  storageClassName: manual\n  accessModes: [ReadWriteOnce]\n  resources:\n    requests:\n      storage: 2Gi\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: storage-pod\n  namespace: storage-namespace\nspec:\n  containers:\n  - name: my-container\n    image: nginx\n    volumeMounts: [{name: my-volume, mountPath: /my-mount}]\n  volumes: [{name: my-volume, persistentVolumeClaim: {claimName: my-pvc}}]",
+			Weight:   8,
+			Checks: []models.Check{
+				{ID: "pv-exists", Description: "PV my-pv exists", Weight: 2, CommandArgs: "get pv my-pv -o name", ExpectSubstring: "persistentvolume/my-pv"},
+				{ID: "pv-capacity", Description: "PV capacity 5Gi", Weight: 1, CommandArgs: "get pv my-pv -o jsonpath={.spec.capacity.storage}", ExpectSubstring: "5Gi"},
+				{ID: "pvc-exists", Description: "PVC my-pvc exists", Weight: 2, CommandArgs: "get pvc my-pvc -n storage-namespace -o name", ExpectSubstring: "persistentvolumeclaim/my-pvc"},
+				{ID: "pod-mount", Description: "Pod mounts at /my-mount", Weight: 3, CommandArgs: "get pod storage-pod -n storage-namespace -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/my-mount"},
+			},
+			Cleanup: []string{"delete namespace storage-namespace --ignore-not-found", "delete pv my-pv --ignore-not-found"},
+		},
+		{
+			ID:          "jb-02-02",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "ResourceQuota and LimitRange",
+			Description: "Quotas and LimitRanges control resource usage per namespace.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace quota-namespace"}},
+			Task:        "In namespace quota-namespace, create a ResourceQuota named 'my-quota' with hard cpu=500m memory=2Gi, and a LimitRange named 'my-limit' limiting Pods to max memory 1Gi cpu 250m (type Pod).",
+			Hints: []string{
+				"kubectl create quota my-quota --hard=cpu=500m,memory=2Gi -n quota-namespace",
+				"LimitRange YAML: spec.limits: [{type: Pod, max: {memory: 1Gi, cpu: 250m}}]",
+			},
+			Solution: "kubectl create quota my-quota --hard=cpu=500m,memory=2Gi -n quota-namespace\napiVersion: v1\nkind: LimitRange\nmetadata:\n  name: my-limit\n  namespace: quota-namespace\nspec:\n  limits:\n  - type: Pod\n    max:\n      memory: 1Gi\n      cpu: 250m",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "quota-exists", Description: "ResourceQuota my-quota exists", Weight: 2, CommandArgs: "get quota my-quota -n quota-namespace -o name", ExpectSubstring: "resourcequota/my-quota"},
+				{ID: "quota-cpu", Description: "Quota cpu 500m", Weight: 1, CommandArgs: "get quota my-quota -n quota-namespace -o jsonpath={.spec.hard.cpu}", ExpectSubstring: "500m"},
+				{ID: "lr-exists", Description: "LimitRange my-limit exists", Weight: 2, CommandArgs: "get limitrange my-limit -n quota-namespace -o name", ExpectSubstring: "limitrange/my-limit"},
+				{ID: "lr-max-mem", Description: "LimitRange max memory 1Gi", Weight: 1, CommandArgs: "get limitrange my-limit -n quota-namespace -o jsonpath={.spec.limits[0].max.memory}", ExpectSubstring: "1Gi"},
+			},
+			Cleanup: []string{"delete namespace quota-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-02-03",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Immutable Secret with env vars",
+			Description: "Immutable Secrets cannot be updated after creation.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace secret-namespace"}},
+			Task:        "In namespace secret-namespace, create an immutable Secret named 'my-secret' with literals user=bob password=123456, and a Pod named 'secret-pod' (nginx) that consumes them as env vars SECRET_ENV_USER and SECRET_ENV_PASSWORD via secretKeyRef.",
+			Hints: []string{
+				"Secret YAML needs immutable: true and stringData: {user: bob, password: 123456}",
+				"Pod env: - name: SECRET_ENV_USER, valueFrom: {secretKeyRef: {name: my-secret, key: user}}",
+			},
+			Solution: "apiVersion: v1\nkind: Secret\nmetadata:\n  name: my-secret\n  namespace: secret-namespace\nimmutable: true\nstringData:\n  user: bob\n  password: 123456\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: secret-pod\n  namespace: secret-namespace\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    env:\n    - name: SECRET_ENV_USER\n      valueFrom:\n        secretKeyRef:\n          name: my-secret\n          key: user\n    - name: SECRET_ENV_PASSWORD\n      valueFrom:\n        secretKeyRef:\n          name: my-secret\n          key: password",
+			Weight:   8,
+			Checks: []models.Check{
+				{ID: "secret-exists", Description: "Secret my-secret exists", Weight: 2, CommandArgs: "get secret my-secret -n secret-namespace -o name", ExpectSubstring: "secret/my-secret"},
+				{ID: "secret-immutable", Description: "Secret is immutable", Weight: 2, CommandArgs: "get secret my-secret -n secret-namespace -o jsonpath={.immutable}", ExpectSubstring: "true"},
+				{ID: "pod-exists", Description: "Pod secret-pod exists", Weight: 2, CommandArgs: "get pod secret-pod -n secret-namespace -o name", ExpectSubstring: "pod/secret-pod"},
+				{ID: "env-user", Description: "Env SECRET_ENV_USER from secret", Weight: 2, CommandArgs: "get pod secret-pod -n secret-namespace -o jsonpath={.spec.containers[0].env[0].name}", ExpectSubstring: "SECRET_ENV_USER"},
+			},
+			Cleanup: []string{"delete namespace secret-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-02-04",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "ServiceAccount and Pod",
+			Description: "ServiceAccounts provide identity for pods.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace serviceaccount-namespace"}},
+			Task:        "In namespace serviceaccount-namespace, create a ServiceAccount named 'my-serviceaccount' and a Pod named 'my-serviceaccount-pod' (nginx) that uses it (serviceAccountName).",
+			Hints: []string{
+				"kubectl create serviceaccount my-serviceaccount -n serviceaccount-namespace",
+				"Pod spec.serviceAccountName: my-serviceaccount",
+			},
+			Solution: "kubectl create serviceaccount my-serviceaccount -n serviceaccount-namespace\napiVersion: v1\nkind: Pod\nmetadata:\n  name: my-serviceaccount-pod\n  namespace: serviceaccount-namespace\nspec:\n  serviceAccountName: my-serviceaccount\n  containers:\n  - name: nginx\n    image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "sa-exists", Description: "ServiceAccount my-serviceaccount exists", Weight: 2, CommandArgs: "get sa my-serviceaccount -n serviceaccount-namespace -o name", ExpectSubstring: "serviceaccount/my-serviceaccount"},
+				{ID: "pod-sa", Description: "Pod uses serviceAccountName my-serviceaccount", Weight: 2, CommandArgs: "get pod my-serviceaccount-pod -n serviceaccount-namespace -o jsonpath={.spec.serviceAccountName}", ExpectSubstring: "my-serviceaccount"},
+			},
+			Cleanup: []string{"delete namespace serviceaccount-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-02-05",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyHard,
+			Title:       "RBAC Role and RoleBinding",
+			Description: "RBAC Roles grant permissions within a namespace.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace rbac-namespace"},
+				{Name: "create sa", CommandArgs: "create serviceaccount rbac-sa -n rbac-namespace"},
+			},
+			Task: "In namespace rbac-namespace, ServiceAccount 'rbac-sa' already exists. Create a Role named 'pod-deleter' that allows 'delete' on 'pods' (apiGroups: [\"\"]), and a RoleBinding named 'allow-delete' binding the Role to the ServiceAccount rbac-sa.",
+			Hints: []string{
+				"Role rules: [{apiGroups: [\"\"], resources: [\"pods\"], verbs: [\"delete\"]}]",
+				"RoleBinding subjects: [{kind: ServiceAccount, name: rbac-sa, namespace: rbac-namespace}], roleRef: {kind: Role, name: pod-deleter}",
+			},
+			Solution: "apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: pod-deleter\n  namespace: rbac-namespace\nrules:\n- apiGroups: [\"\"]\n  resources: [\"pods\"]\n  verbs: [\"delete\"]\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: allow-delete\n  namespace: rbac-namespace\nsubjects:\n- kind: ServiceAccount\n  name: rbac-sa\n  namespace: rbac-namespace\nroleRef:\n  kind: Role\n  name: pod-deleter\n  apiGroup: rbac.authorization.k8s.io",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "role-exists", Description: "Role pod-deleter exists", Weight: 2, CommandArgs: "get role pod-deleter -n rbac-namespace -o name", ExpectSubstring: "role.rbac.authorization.k8s.io/pod-deleter"},
+				{ID: "role-verb", Description: "Role allows delete on pods", Weight: 2, CommandArgs: "get role pod-deleter -n rbac-namespace -o jsonpath={.rules[0].verbs[0]}", ExpectSubstring: "delete"},
+				{ID: "binding-exists", Description: "RoleBinding allow-delete exists", Weight: 2, CommandArgs: "get rolebinding allow-delete -n rbac-namespace -o name", ExpectSubstring: "rolebinding.rbac.authorization.k8s.io/allow-delete"},
+			},
+			Cleanup: []string{"delete namespace rbac-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-03-01",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Deployment with resources and container name",
+			Description: "Deployments can set container names and resource requirements.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace deployment-namespace"}},
+			Task:        "In namespace deployment-namespace, create a Deployment named 'my-deployment' with 3 replicas using image nginx, exposing port 80, container name 'my-container', memory request 25Mi and limit 100Mi.",
+			Hints: []string{
+				"kubectl create deployment my-deployment --image=nginx --replicas=3 --port=80 -n deployment-namespace --dry-run=client -o yaml > dep.yaml, then edit container name and resources",
+				"resources: {requests: {memory: 25Mi}, limits: {memory: 100Mi}}",
+			},
+			Solution: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: my-deployment\n  namespace: deployment-namespace\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: my-deployment\n  template:\n    metadata:\n      labels:\n        app: my-deployment\n    spec:\n      containers:\n      - name: my-container\n        image: nginx\n        ports: [{containerPort: 80}]\n        resources:\n          requests:\n            memory: 25Mi\n          limits:\n            memory: 100Mi",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "deploy-exists", Description: "Deployment my-deployment exists", Weight: 1, CommandArgs: "get deploy my-deployment -n deployment-namespace -o name", ExpectSubstring: "deployment.apps/my-deployment"},
+				{ID: "replicas", Description: "Has 3 replicas", Weight: 1, CommandArgs: "get deploy my-deployment -n deployment-namespace -o jsonpath={.spec.replicas}", ExpectSubstring: "3"},
+				{ID: "container-name", Description: "Container name my-container", Weight: 2, CommandArgs: "get deploy my-deployment -n deployment-namespace -o jsonpath={.spec.template.spec.containers[0].name}", ExpectSubstring: "my-container"},
+				{ID: "mem-request", Description: "Memory request 25Mi", Weight: 1, CommandArgs: "get deploy my-deployment -n deployment-namespace -o jsonpath={.spec.template.spec.containers[0].resources.requests.memory}", ExpectSubstring: "25Mi"},
+				{ID: "mem-limit", Description: "Memory limit 100Mi", Weight: 1, CommandArgs: "get deploy my-deployment -n deployment-namespace -o jsonpath={.spec.template.spec.containers[0].resources.limits.memory}", ExpectSubstring: "100Mi"},
+			},
+			Cleanup: []string{"delete namespace deployment-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-03-05",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyHard,
+			Title:       "Blue-Green deployment",
+			Description: "Blue-green deploys two versions and switches service selector.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace blue-green-namespace"}},
+			Task:        "In namespace blue-green-namespace, create two Deployments: 'blue' (image nginx:1.16, 3 replicas, label version=blue) and 'green' (image nginx:1.17, 3 replicas, label version=green), both with label app=my-app, and a Service 'my-service' ClusterIP port 80 targeting app=my-app version=blue.",
+			Hints: []string{
+				"Each deployment needs selector matchLabels app=my-app version=blue/green and template labels same",
+				"Service selector: app=my-app, version=blue; port 80 targetPort 80",
+			},
+			Solution: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: blue\n  namespace: blue-green-namespace\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: my-app\n      version: blue\n  template:\n    metadata:\n      labels:\n        app: my-app\n        version: blue\n    spec:\n      containers:\n      - name: nginx\n        image: nginx:1.16\n        ports: [{containerPort: 80}]\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: green\n  namespace: blue-green-namespace\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: my-app\n      version: green\n  template:\n    metadata:\n      labels:\n        app: my-app\n        version: green\n    spec:\n      containers:\n      - name: nginx\n        image: nginx:1.17\n        ports: [{containerPort: 80}]\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: my-service\n  namespace: blue-green-namespace\nspec:\n  selector:\n    app: my-app\n    version: blue\n  ports: [{port: 80, targetPort: 80}]",
+			Weight:   8,
+			Checks: []models.Check{
+				{ID: "blue-exists", Description: "Deployment blue exists", Weight: 2, CommandArgs: "get deploy blue -n blue-green-namespace -o name", ExpectSubstring: "deployment.apps/blue"},
+				{ID: "green-exists", Description: "Deployment green exists", Weight: 2, CommandArgs: "get deploy green -n blue-green-namespace -o name", ExpectSubstring: "deployment.apps/green"},
+				{ID: "svc-exists", Description: "Service my-service exists", Weight: 2, CommandArgs: "get svc my-service -n blue-green-namespace -o name", ExpectSubstring: "service/my-service"},
+				{ID: "svc-selector", Description: "Service selector version=blue", Weight: 2, CommandArgs: "get svc my-service -n blue-green-namespace -o jsonpath={.spec.selector.version}", ExpectSubstring: "blue"},
+			},
+			Cleanup: []string{"delete namespace blue-green-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-04-01",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyHard,
+			Title:       "NetworkPolicy web to app",
+			Description: "NetworkPolicies restrict pod communication.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace netpol-namespace"},
+				{Name: "create web-pod", CommandArgs: "run web-pod --image=nginx --labels=tier=web --port=80 -n netpol-namespace"},
+				{Name: "create app-pod", CommandArgs: "run app-pod --image=nginx --labels=tier=app --port=80 -n netpol-namespace"},
+				{Name: "create db-pod", CommandArgs: "run db-pod --image=nginx --labels=tier=db --port=80 -n netpol-namespace"},
+			},
+			Task: "In namespace netpol-namespace, 3 pods already exist (web-pod tier=web, app-pod tier=app, db-pod tier=db). Create a NetworkPolicy named 'web-to-app' that allows ingress to pods with tier=app from pods with tier=web on port 80, and a default deny-all ingress policy.",
+			Hints: []string{
+				"web-to-app: podSelector tier=app, ingress from podSelector tier=web port 80",
+				"default-deny: podSelector {}, policyTypes Ingress",
+			},
+			Solution: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: default-deny-all\n  namespace: netpol-namespace\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]\n---\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: web-to-app\n  namespace: netpol-namespace\nspec:\n  podSelector:\n    matchLabels:\n      tier: app\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: web\n    ports:\n    - port: 80\n  policyTypes: [Ingress]",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "netpol-exists", Description: "NetworkPolicy web-to-app exists", Weight: 2, CommandArgs: "get networkpolicy web-to-app -n netpol-namespace -o name", ExpectSubstring: "networkpolicy.networking.k8s.io/web-to-app"},
+				{ID: "pod-selector", Description: "Selects tier=app", Weight: 2, CommandArgs: "get networkpolicy web-to-app -n netpol-namespace -o jsonpath={.spec.podSelector.matchLabels.tier}", ExpectSubstring: "app"},
+				{ID: "ingress-from", Description: "Allows from tier=web", Weight: 2, CommandArgs: "get networkpolicy web-to-app -n netpol-namespace -o jsonpath={.spec.ingress[0].from[0].podSelector.matchLabels.tier}", ExpectSubstring: "web"},
+			},
+			Cleanup: []string{"delete namespace netpol-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-04-02",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Service for deployment",
+			Description: "Services expose deployments inside the cluster.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace service-namespace"},
+				{Name: "create deployment", CommandArgs: "create deployment my-deployment --image=nginx --replicas=3 --port=80 -n service-namespace"},
+			},
+			Task: "In namespace service-namespace, Deployment my-deployment (nginx, 3 replicas, port 80) already exists. Expose it via a ClusterIP Service named 'my-service' on port 80 targeting port 80.",
+			Hints: []string{
+				"kubectl expose deployment my-deployment --name=my-service --port=80 --target-port=80 -n service-namespace",
+				"Verify with kubectl get svc my-service -n service-namespace",
+			},
+			Solution: "kubectl expose deployment my-deployment --name=my-service --port=80 --target-port=80 -n service-namespace",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "svc-exists", Description: "Service my-service exists", Weight: 2, CommandArgs: "get svc my-service -n service-namespace -o name", ExpectSubstring: "service/my-service"},
+				{ID: "svc-port", Description: "Service port 80", Weight: 2, CommandArgs: "get svc my-service -n service-namespace -o jsonpath={.spec.ports[0].port}", ExpectSubstring: "80"},
+			},
+			Cleanup: []string{"delete namespace service-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-04-03",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyHard,
+			Title:       "Ingress for service",
+			Description: "Ingress exposes services externally via HTTP routing.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ingress-namespace"},
+				{Name: "create deployment", CommandArgs: "create deployment my-deployment --image=nginx --port=80 -n ingress-namespace"},
+				{Name: "expose", CommandArgs: "expose deployment my-deployment --name=my-service --port=80 --target-port=80 -n ingress-namespace"},
+			},
+			Task: "In namespace ingress-namespace, Deployment my-deployment and Service my-service (port 80) already exist. Create an Ingress named 'my-ingress' with host my-app.example.com path / (Prefix) routing to Service my-service port 80.",
+			Hints: []string{
+				"apiVersion networking.k8s.io/v1, kind Ingress, spec.rules[0].host my-app.example.com",
+				"backend.service.name my-service, port number 80, pathType Prefix",
+			},
+			Solution: "apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: my-ingress\n  namespace: ingress-namespace\nspec:\n  rules:\n  - host: my-app.example.com\n    http:\n      paths:\n      - path: /\n        pathType: Prefix\n        backend:\n          service:\n            name: my-service\n            port:\n              number: 80",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "ing-exists", Description: "Ingress my-ingress exists", Weight: 2, CommandArgs: "get ingress my-ingress -n ingress-namespace -o name", ExpectSubstring: "ingress.networking.k8s.io/my-ingress"},
+				{ID: "ing-host", Description: "Host my-app.example.com", Weight: 2, CommandArgs: "get ingress my-ingress -n ingress-namespace -o jsonpath={.spec.rules[0].host}", ExpectSubstring: "my-app.example.com"},
+				{ID: "ing-svc", Description: "Routes to my-service", Weight: 2, CommandArgs: "get ingress my-ingress -n ingress-namespace -o jsonpath={.spec.rules[0].http.paths[0].backend.service.name}", ExpectSubstring: "my-service"},
+			},
+			Cleanup: []string{"delete namespace ingress-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-05-04",
+			Domain:      models.DomainApplicationObservability,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "JSONPath hostIP",
+			Description: "JSONPath queries extract fields from Kubernetes objects.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace json-namespace"},
+				{Name: "create pod", CommandArgs: "run json-pod --image=nginx -n json-namespace"},
+			},
+			Task: "In namespace json-namespace, Pod json-pod (nginx) already exists. For grading, ensure the Pod exists and demonstrate you can query its hostIP via JSONPath (kubectl get pod json-pod -o jsonpath={.status.hostIP} -n json-namespace).",
+			Hints: []string{
+				"kubectl get pod json-pod -o jsonpath={.status.hostIP} -n json-namespace",
+				"Or kubectl get pod json-pod -o jsonpath={..hostIP} -n json-namespace",
+			},
+			Solution: "kubectl get pod json-pod -o jsonpath={.status.hostIP} -n json-namespace",
+			Weight:   2,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod json-pod exists", Weight: 2, CommandArgs: "get pod json-pod -n json-namespace -o name", ExpectSubstring: "pod/json-pod"},
+			},
+			Cleanup: []string{"delete namespace json-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-05-05",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Deployment rollout history",
+			Description: "Rollout history tracks deployment revisions.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace revision-namespace"},
+				{Name: "create deploy v1", CommandArgs: "create deployment my-revision-deployment --image=nginx:1.16 --replicas=2 -n revision-namespace"},
+				{Name: "update to v2", CommandArgs: "set image deployment/my-revision-deployment nginx=nginx:1.17 -n revision-namespace"},
+				{Name: "update to bad", CommandArgs: "set image deployment/my-revision-deployment nginx=nginx:9.9 -n revision-namespace"},
+			},
+			Task: "In namespace revision-namespace, Deployment my-revision-deployment was updated from nginx:1.16 -> nginx:1.17 -> nginx:9.9 (broken). Roll it back to the previous working revision (nginx:1.17) using rollout undo.",
+			Hints: []string{
+				"kubectl rollout history deployment/my-revision-deployment -n revision-namespace",
+				"kubectl rollout undo deployment/my-revision-deployment -n revision-namespace",
+			},
+			Solution: "kubectl rollout undo deployment/my-revision-deployment -n revision-namespace",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "image-rolled-back", Description: "Image is nginx:1.17", Weight: 4, CommandArgs: "get deploy my-revision-deployment -n revision-namespace -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.17"},
+			},
+			Cleanup: []string{"delete namespace revision-namespace --ignore-not-found"},
+		},
+		{
+			ID:          "jb-06-04",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Strategic merge patch",
+			Description: "kubectl patch updates fields without full edit.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace patch-namespace"},
+				{Name: "create deploy", CommandArgs: "create deployment patch-deployment --image=nginx --replicas=2 -n patch-namespace"},
+			},
+			Task: "In namespace patch-namespace, Deployment patch-deployment (nginx, 2 replicas) already exists. Patch it to add label patched=true to the pod template (spec.template.metadata.labels).",
+			Hints: []string{
+				"kubectl patch deployment patch-deployment -n patch-namespace --patch '{\"spec\":{\"template\":{\"metadata\":{\"labels\":{\"patched\":\"true\"}}}}}'",
+				"Verify with kubectl get deployment patch-deployment -o jsonpath={.spec.template.metadata.labels.patched} -n patch-namespace",
+			},
+			Solution: "kubectl patch deployment patch-deployment -n patch-namespace --patch '{\"spec\":{\"template\":{\"metadata\":{\"labels\":{\"patched\":\"true\"}}}}}'",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "patched-label", Description: "Template has label patched=true", Weight: 4, CommandArgs: "get deploy patch-deployment -n patch-namespace -o jsonpath={.spec.template.metadata.labels.patched}", ExpectSubstring: "true"},
+			},
+			Cleanup: []string{"delete namespace patch-namespace --ignore-not-found"},
+		},
+		// =========================================================
+		// ibrahimatay/CKAD-Exercises
+		// =========================================================
+		{
+			ID:          "ib-01",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Frontend deployment with NGINX_PORT",
+			Description: "Deployments can inject env vars and expose ports.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace kdpd00201"}},
+			Task:        "In namespace kdpd00201, create a Deployment named 'frontend' with 4 replicas using image lfccncf/nginx:1.13.7, container port 8080 and env NGINX_PORT=8080.",
+			Hints: []string{
+				"kubectl create deployment frontend --image=lfccncf/nginx:1.13.7 --replicas=4 --port=8080 -n kdpd00201 --dry-run=client -o yaml > dep.yaml, then add env",
+				"env: [{name: NGINX_PORT, value: \"8080\"}] under container",
+			},
+			Solution: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: frontend\n  namespace: kdpd00201\nspec:\n  replicas: 4\n  selector:\n    matchLabels:\n      app: frontend\n  template:\n    metadata:\n      labels:\n        app: frontend\n    spec:\n      containers:\n      - name: nginx\n        image: lfccncf/nginx:1.13.7\n        ports: [{containerPort: 8080}]\n        env: [{name: NGINX_PORT, value: \"8080\"}]",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "deploy-exists", Description: "Deployment frontend exists", Weight: 2, CommandArgs: "get deploy frontend -n kdpd00201 -o name", ExpectSubstring: "deployment.apps/frontend"},
+				{ID: "replicas", Description: "Has 4 replicas", Weight: 1, CommandArgs: "get deploy frontend -n kdpd00201 -o jsonpath={.spec.replicas}", ExpectSubstring: "4"},
+				{ID: "image", Description: "Uses lfccncf/nginx:1.13.7", Weight: 1, CommandArgs: "get deploy frontend -n kdpd00201 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "lfccncf/nginx:1.13.7"},
+				{ID: "env", Description: "Env NGINX_PORT=8080", Weight: 2, CommandArgs: "get deploy frontend -n kdpd00201 -o jsonpath={.spec.template.spec.containers[0].env[0].name}", ExpectSubstring: "NGINX_PORT"},
+			},
+			Cleanup: []string{"delete namespace kdpd00201 --ignore-not-found"},
+		},
+		{
+			ID:          "ib-04",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Pod with args lfccncf/arg-output",
+			Description: "Pods can run containers with specific args.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ib-04"}},
+			Task:        "In namespace ib-04, create a Pod named 'app1' with container 'app1cont' using image lfccncf/arg-output and args [\"-lines\", \"56\", \"-F\"].",
+			Hints: []string{
+				"kubectl run app1 --image=lfccncf/arg-output --dry-run=client -o yaml > pod.yaml, then add args and container name",
+				"spec.containers[0].args: [\"-lines\", \"56\", \"-F\"], name: app1cont",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: app1\n  namespace: ib-04\nspec:\n  containers:\n  - name: app1cont\n    image: lfccncf/arg-output\n    args: [\"-lines\", \"56\", \"-F\"]",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod app1 exists", Weight: 1, CommandArgs: "get pod app1 -n ib-04 -o name", ExpectSubstring: "pod/app1"},
+				{ID: "container-name", Description: "Container name app1cont", Weight: 1, CommandArgs: "get pod app1 -n ib-04 -o jsonpath={.spec.containers[0].name}", ExpectSubstring: "app1cont"},
+				{ID: "image", Description: "Uses lfccncf/arg-output", Weight: 1, CommandArgs: "get pod app1 -n ib-04 -o jsonpath={.spec.containers[0].image}", ExpectSubstring: "lfccncf/arg-output"},
+				{ID: "args", Description: "Args contain -lines", Weight: 1, CommandArgs: "get pod app1 -n ib-04 -o jsonpath={.spec.containers[0].args}", ExpectSubstring: "-lines"},
+			},
+			Cleanup: []string{"delete namespace ib-04 --ignore-not-found"},
+		},
+		{
+			ID:          "ib-05",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "PV with storageClass exam",
+			Description: "PVs with custom storageClass bind to matching PVCs.",
+			Prepare:     nil,
+			Task:        "Create a PersistentVolume named 'task-pv-volume' with 1Gi hostPath /opt/KDSP00101/data storageClass exam accessMode ReadWriteOnce, a PVC named 'task-pv-claim' with 100Mi storageClass exam, and a Pod named 'nginx' (label app=my-storage-app) mounting the PVC at /usr/share/nginx/html (volume html).",
+			Hints: []string{
+				"PV: capacity 1Gi, hostPath /opt/KDSP00101/data, storageClassName exam",
+				"PVC: storage 100Mi, storageClassName exam; Pod: volumes.persistentVolumeClaim.claimName task-pv-claim, mountPath /usr/share/nginx/html",
+			},
+			Solution: "apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: task-pv-volume\nspec:\n  capacity:\n    storage: 1Gi\n  accessModes: [ReadWriteOnce]\n  storageClassName: exam\n  hostPath:\n    path: /opt/KDSP00101/data\n---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: task-pv-claim\nspec:\n  storageClassName: exam\n  accessModes: [ReadWriteOnce]\n  resources:\n    requests:\n      storage: 100Mi\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  labels:\n    app: my-storage-app\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    volumeMounts: [{name: html, mountPath: /usr/share/nginx/html}]\n  volumes: [{name: html, persistentVolumeClaim: {claimName: task-pv-claim}}]",
+			Weight:   8,
+			Checks: []models.Check{
+				{ID: "pv-exists", Description: "PV task-pv-volume exists", Weight: 2, CommandArgs: "get pv task-pv-volume -o name", ExpectSubstring: "persistentvolume/task-pv-volume"},
+				{ID: "pv-class", Description: "PV storageClass exam", Weight: 1, CommandArgs: "get pv task-pv-volume -o jsonpath={.spec.storageClassName}", ExpectSubstring: "exam"},
+				{ID: "pvc-exists", Description: "PVC task-pv-claim exists", Weight: 2, CommandArgs: "get pvc task-pv-claim -o name", ExpectSubstring: "persistentvolumeclaim/task-pv-claim"},
+				{ID: "pod-mount", Description: "Pod mounts at /usr/share/nginx/html", Weight: 3, CommandArgs: "get pod nginx -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/usr/share/nginx/html"},
+			},
+			Cleanup: []string{"delete pod nginx --ignore-not-found", "delete pvc task-pv-claim --ignore-not-found", "delete pv task-pv-volume --ignore-not-found"},
+		},
+		{
+			ID:          "ib-06",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "ConfigMap volume at /also/a/path",
+			Description: "ConfigMaps can be mounted at arbitrary paths.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ib-06"},
+				{Name: "create configmap", CommandArgs: "create configmap namedanother-config --from-literal=key4=value3 -n ib-06"},
+			},
+			Task: "In namespace ib-06, ConfigMap 'namedanother-config' with key4=value3 already exists. Create a Pod named 'nginx-configmap' (nginx) mounting the ConfigMap at /also/a/path (volume nginx-configmap-volume).",
+			Hints: []string{
+				"volumes: [{name: nginx-configmap-volume, configMap: {name: namedanother-config}}]",
+				"volumeMounts: [{name: nginx-configmap-volume, mountPath: /also/a/path}]",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-configmap\n  namespace: ib-06\nspec:\n  containers:\n  - name: nginx-configmap\n    image: nginx\n    volumeMounts: [{name: nginx-configmap-volume, mountPath: /also/a/path}]\n  volumes: [{name: nginx-configmap-volume, configMap: {name: namedanother-config}}]",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx-configmap exists", Weight: 2, CommandArgs: "get pod nginx-configmap -n ib-06 -o name", ExpectSubstring: "pod/nginx-configmap"},
+				{ID: "mount-path", Description: "Mounts at /also/a/path", Weight: 2, CommandArgs: "get pod nginx-configmap -n ib-06 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/also/a/path"},
+			},
+			Cleanup: []string{"delete namespace ib-06 --ignore-not-found"},
+		},
+		{
+			ID:          "ib-07",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Redis cache pod",
+			Description: "Pods can run redis for caching.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace web"}},
+			Task:        "In namespace web, create a Pod named 'cache' using image lfccncf/redis:3.2 exposing port 6379.",
+			Hints: []string{
+				"kubectl run cache --image=lfccncf/redis:3.2 --port=6379 -n web",
+				"Verify with kubectl get pod cache -o jsonpath={.spec.containers[0].ports[0].containerPort} -n web",
+			},
+			Solution: "kubectl run cache --image=lfccncf/redis:3.2 --port=6379 -n web",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod cache exists", Weight: 2, CommandArgs: "get pod cache -n web -o name", ExpectSubstring: "pod/cache"},
+				{ID: "port", Description: "Exposes port 6379", Weight: 2, CommandArgs: "get pod cache -n web -o jsonpath={.spec.containers[0].ports[0].containerPort}", ExpectSubstring: "6379"},
+			},
+			Cleanup: []string{"delete namespace web --ignore-not-found"},
+		},
+		{
+			ID:          "ib-08",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with CPU and memory requests",
+			Description: "Resource requests ensure scheduling.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace pod-resources"}},
+			Task:        "In namespace pod-resources, create a Pod named 'nginx-resources' using image nginx with requests cpu=200m memory=1Gi.",
+			Hints: []string{
+				"resources.requests: {cpu: 200m, memory: 1Gi}",
+				"Use --dry-run=client -o yaml and edit resources",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-resources\n  namespace: pod-resources\nspec:\n  containers:\n  - name: nginx-resources\n    image: nginx\n    resources:\n      requests:\n        cpu: 200m\n        memory: 1Gi",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx-resources exists", Weight: 1, CommandArgs: "get pod nginx-resources -n pod-resources -o name", ExpectSubstring: "pod/nginx-resources"},
+				{ID: "cpu", Description: "Requests cpu 200m", Weight: 1, CommandArgs: "get pod nginx-resources -n pod-resources -o jsonpath={.spec.containers[0].resources.requests.cpu}", ExpectSubstring: "200m"},
+				{ID: "memory", Description: "Requests memory 1Gi", Weight: 2, CommandArgs: "get pod nginx-resources -n pod-resources -o jsonpath={.spec.containers[0].resources.requests.memory}", ExpectSubstring: "1Gi"},
+			},
+			Cleanup: []string{"delete namespace pod-resources --ignore-not-found"},
+		},
+		{
+			ID:          "ib-09",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "CronJob with activeDeadlineSeconds",
+			Description: "activeDeadlineSeconds limits job execution time.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ib-09"}},
+			Task:        "In namespace ib-09, create a CronJob named 'hello' using image busybox schedule '* * * * *' command [\"sh\", \"-c\", \"date\"] with job activeDeadlineSeconds 22 (container name hello).",
+			Hints: []string{
+				"kubectl create cronjob hello --image=busybox --schedule='* * * * *' -n ib-09 --dry-run=client -o yaml > cj.yaml, then add jobTemplate.spec.activeDeadlineSeconds: 22",
+				"spec.jobTemplate.spec.activeDeadlineSeconds: 22",
+			},
+			Solution: "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: hello\n  namespace: ib-09\nspec:\n  schedule: '* * * * *'\n  jobTemplate:\n    spec:\n      activeDeadlineSeconds: 22\n      template:\n        spec:\n          containers:\n          - name: hello\n            image: busybox\n            command: [\"sh\", \"-c\", \"date\"]\n          restartPolicy: OnFailure",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "cj-exists", Description: "CronJob hello exists", Weight: 2, CommandArgs: "get cronjob hello -n ib-09 -o name", ExpectSubstring: "cronjob.batch/hello"},
+				{ID: "deadline", Description: "activeDeadlineSeconds 22", Weight: 2, CommandArgs: "get cronjob hello -n ib-09 -o jsonpath={.spec.jobTemplate.spec.activeDeadlineSeconds}", ExpectSubstring: "22"},
+			},
+			Cleanup: []string{"delete namespace ib-09 --ignore-not-found"},
+		},
+		{
+			ID:          "ib-11",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyHard,
+			Title:       "NetworkPolicy for newpod",
+			Description: "NetworkPolicies can allow specific pod communication.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ib-11"},
+				{Name: "create newpod", CommandArgs: "run newpod --image=nginx --labels=app=newpod -n ib-11"},
+				{Name: "create web", CommandArgs: "run web --image=nginx --labels=app=web -n ib-11"},
+				{Name: "create storage", CommandArgs: "run storage --image=nginx --labels=app=storage -n ib-11"},
+			},
+			Task: "In namespace ib-11, 3 pods already exist (newpod app=newpod, web app=web, storage app=storage). Create a NetworkPolicy named 'allow-newpod-web-storage' that allows newpod (app=newpod) to only send/receive traffic to/from web and storage (both ingress and egress).",
+			Hints: []string{
+				"podSelector app=newpod, policyTypes Ingress,Egress",
+				"ingress from podSelector app=web and app=storage; egress to podSelector app=web and app=storage",
+			},
+			Solution: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: allow-newpod-web-storage\n  namespace: ib-11\nspec:\n  podSelector:\n    matchLabels:\n      app: newpod\n  policyTypes: [Ingress, Egress]\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          app: web\n    - podSelector:\n        matchLabels:\n          app: storage\n  egress:\n  - to:\n    - podSelector:\n        matchLabels:\n          app: web\n    - podSelector:\n        matchLabels:\n          app: storage",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "netpol-exists", Description: "NetworkPolicy allow-newpod-web-storage exists", Weight: 2, CommandArgs: "get networkpolicy allow-newpod-web-storage -n ib-11 -o name", ExpectSubstring: "networkpolicy.networking.k8s.io/allow-newpod-web-storage"},
+				{ID: "pod-selector", Description: "Selects app=newpod", Weight: 2, CommandArgs: "get networkpolicy allow-newpod-web-storage -n ib-11 -o jsonpath={.spec.podSelector.matchLabels.app}", ExpectSubstring: "newpod"},
+				{ID: "policy-types", Description: "Has Ingress and Egress", Weight: 2, CommandArgs: "get networkpolicy allow-newpod-web-storage -n ib-11 -o jsonpath={.spec.policyTypes}", ExpectSubstring: "Ingress"},
+			},
+			Cleanup: []string{"delete namespace ib-11 --ignore-not-found"},
+		},
+		// =========================================================
+		// bbachi/CKAD-Practice-Questions
+		// =========================================================
+		{
+			ID:          "bb-01",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "Five pods with env labels",
+			Description: "Labels group pods for selection.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace bb-labels"}},
+			Task:        "In namespace bb-labels, create 5 Pods: nginx-dev1, nginx-dev2, nginx-dev3 with label env=dev, and nginx-prod1, nginx-prod2 with label env=prod (all image nginx, restart=Never).",
+			Hints: []string{
+				"kubectl run nginx-dev1 --image=nginx --restart=Never --labels=env=dev -n bb-labels (repeat for others)",
+				"Verify with kubectl get pods --show-labels -n bb-labels",
+			},
+			Solution: "kubectl run nginx-dev1 --image=nginx --restart=Never --labels=env=dev -n bb-labels\nkubectl run nginx-dev2 --image=nginx --restart=Never --labels=env=dev -n bb-labels\nkubectl run nginx-dev3 --image=nginx --restart=Never --labels=env=dev -n bb-labels\nkubectl run nginx-prod1 --image=nginx --restart=Never --labels=env=prod -n bb-labels\nkubectl run nginx-prod2 --image=nginx --restart=Never --labels=env=prod -n bb-labels",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "dev1", Description: "nginx-dev1 has env=dev", Weight: 1, CommandArgs: "get pod nginx-dev1 -n bb-labels -o jsonpath={.metadata.labels.env}", ExpectSubstring: "dev"},
+				{ID: "dev2", Description: "nginx-dev2 has env=dev", Weight: 1, CommandArgs: "get pod nginx-dev2 -n bb-labels -o jsonpath={.metadata.labels.env}", ExpectSubstring: "dev"},
+				{ID: "prod1", Description: "nginx-prod1 has env=prod", Weight: 2, CommandArgs: "get pod nginx-prod1 -n bb-labels -o jsonpath={.metadata.labels.env}", ExpectSubstring: "prod"},
+				{ID: "prod2", Description: "nginx-prod2 has env=prod", Weight: 2, CommandArgs: "get pod nginx-prod2 -n bb-labels -o jsonpath={.metadata.labels.env}", ExpectSubstring: "prod"},
+			},
+			Cleanup: []string{"delete namespace bb-labels --ignore-not-found"},
+		},
+		{
+			ID:          "bb-02",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Pod with nodeSelector",
+			Description: "nodeSelector schedules pods to labeled nodes.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace bb-node"}},
+			Task:        "In namespace bb-node, create a Pod named 'nginx' using image nginx with nodeSelector nodeName=nginxnode (restart=Never).",
+			Hints: []string{
+				"Add spec.nodeSelector: {nodeName: nginxnode}",
+				"Use --dry-run=client -o yaml and edit",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: bb-node\nspec:\n  nodeSelector:\n    nodeName: nginxnode\n  containers:\n  - name: nginx\n    image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod nginx exists", Weight: 2, CommandArgs: "get pod nginx -n bb-node -o name", ExpectSubstring: "pod/nginx"},
+				{ID: "nodeSelector", Description: "nodeSelector nodeName=nginxnode", Weight: 2, CommandArgs: "get pod nginx -n bb-node -o jsonpath={.spec.nodeSelector.nodeName}", ExpectSubstring: "nginxnode"},
+			},
+			Cleanup: []string{"delete namespace bb-node --ignore-not-found"},
+		},
+		{
+			ID:          "bb-03",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyEasy,
+			Title:       "ConfigMap from literals",
+			Description: "ConfigMaps store configuration.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace bb-cm"}},
+			Task:        "In namespace bb-cm, create a ConfigMap named 'myconfigmap' with literal appname=myapp, and a Pod named 'nginx' (nginx) that loads it via envFrom configMapRef.",
+			Hints: []string{
+				"kubectl create configmap myconfigmap --from-literal=appname=myapp -n bb-cm",
+				"Pod envFrom: [{configMapRef: {name: myconfigmap}}]",
+			},
+			Solution: "kubectl create configmap myconfigmap --from-literal=appname=myapp -n bb-cm\napiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx\n  namespace: bb-cm\nspec:\n  containers:\n  - name: nginx\n    image: nginx\n    envFrom: [{configMapRef: {name: myconfigmap}}]",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "cm-exists", Description: "ConfigMap myconfigmap exists", Weight: 2, CommandArgs: "get configmap myconfigmap -n bb-cm -o name", ExpectSubstring: "configmap/myconfigmap"},
+				{ID: "pod-envFrom", Description: "Pod loads ConfigMap via envFrom", Weight: 2, CommandArgs: "get pod nginx -n bb-cm -o jsonpath={.spec.containers[0].envFrom[0].configMapRef.name}", ExpectSubstring: "myconfigmap"},
+			},
+			Cleanup: []string{"delete namespace bb-cm --ignore-not-found"},
+		},
+		// =========================================================
+		// aleti-pavan/ckad-practice-questions
+		// =========================================================
+		{
+			ID:          "ap-01",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Secret with env var TEST_VARIABLE",
+			Description: "Secrets can be consumed as environment variables via secretKeyRef.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ap-01"}},
+			Task:        "In namespace ap-01, create a Secret named 'my-secret' with literal key2=value10, and a Pod named 'nginx-secret' (nginx) that exposes key2 as env var TEST_VARIABLE via secretKeyRef.",
+			Hints: []string{
+				"kubectl create secret generic my-secret --from-literal=key2=value10 -n ap-01",
+				"Pod env: - name: TEST_VARIABLE, valueFrom: {secretKeyRef: {name: my-secret, key: key2}}",
+			},
+			Solution: "kubectl create secret generic my-secret --from-literal=key2=value10 -n ap-01\napiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-secret\n  namespace: ap-01\nspec:\n  containers:\n  - name: nginx-secret\n    image: nginx\n    env:\n    - name: TEST_VARIABLE\n      valueFrom:\n        secretKeyRef:\n          name: my-secret\n          key: key2",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "secret-exists", Description: "Secret my-secret exists", Weight: 1, CommandArgs: "get secret my-secret -n ap-01 -o name", ExpectSubstring: "secret/my-secret"},
+				{ID: "secret-key", Description: "Secret has key key2", Weight: 1, CommandArgs: "get secret my-secret -n ap-01 -o jsonpath={.data.key2}", ExpectRegex: ".+"},
+				{ID: "pod-exists", Description: "Pod nginx-secret exists", Weight: 1, CommandArgs: "get pod nginx-secret -n ap-01 -o name", ExpectSubstring: "pod/nginx-secret"},
+				{ID: "env-var", Description: "Env TEST_VARIABLE from secret key2", Weight: 1, CommandArgs: "get pod nginx-secret -n ap-01 -o jsonpath={.spec.containers[0].env[0].valueFrom.secretKeyRef.key}", ExpectSubstring: "key2"},
+			},
+			Cleanup: []string{"delete namespace ap-01 --ignore-not-found"},
+		},
+		{
+			ID:          "ap-04",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "ConfigMap volume at /this/is/mypath",
+			Description: "ConfigMaps can be mounted as volumes at arbitrary paths.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ap-04"}},
+			Task:        "In namespace ap-04, create a ConfigMap named 'my-config' with literal key3=value4, and a Pod named 'nginx-configmap' (nginx) mounting the ConfigMap at /this/is/mypath (volume myvol).",
+			Hints: []string{
+				"kubectl create configmap my-config --from-literal=key3=value4 -n ap-04",
+				"volumes: [{name: myvol, configMap: {name: my-config}}], volumeMounts: [{name: myvol, mountPath: /this/is/mypath}]",
+			},
+			Solution: "kubectl create configmap my-config --from-literal=key3=value4 -n ap-04\napiVersion: v1\nkind: Pod\nmetadata:\n  name: nginx-configmap\n  namespace: ap-04\nspec:\n  volumes: [{name: myvol, configMap: {name: my-config}}]\n  containers:\n  - name: nginx-configmap\n    image: nginx\n    volumeMounts: [{name: myvol, mountPath: /this/is/mypath}]",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "cm-exists", Description: "ConfigMap my-config exists", Weight: 1, CommandArgs: "get configmap my-config -n ap-04 -o name", ExpectSubstring: "configmap/my-config"},
+				{ID: "cm-key", Description: "ConfigMap has key3=value4", Weight: 1, CommandArgs: "get configmap my-config -n ap-04 -o jsonpath={.data.key3}", ExpectSubstring: "value4"},
+				{ID: "pod-exists", Description: "Pod nginx-configmap exists", Weight: 1, CommandArgs: "get pod nginx-configmap -n ap-04 -o name", ExpectSubstring: "pod/nginx-configmap"},
+				{ID: "mount-path", Description: "Mounts at /this/is/mypath", Weight: 1, CommandArgs: "get pod nginx-configmap -n ap-04 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/this/is/mypath"},
+			},
+			Cleanup: []string{"delete namespace ap-04 --ignore-not-found"},
+		},
+		{
+			ID:          "ap-05",
+			Domain:      models.DomainApplicationEnvironment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "ServiceAccount for Deployment",
+			Description: "Deployments can run under a specific ServiceAccount.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ap-05"}},
+			Task:        "In namespace ap-05, create a ServiceAccount named 'app-sa' and a Deployment named 'app-deployment' (nginx, 1 replica) that uses serviceAccountName app-sa.",
+			Hints: []string{
+				"kubectl create serviceaccount app-sa -n ap-05",
+				"Deployment spec.template.spec.serviceAccountName: app-sa",
+			},
+			Solution: "kubectl create serviceaccount app-sa -n ap-05\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: app-deployment\n  namespace: ap-05\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: app-deployment\n  template:\n    metadata:\n      labels:\n        app: app-deployment\n    spec:\n      serviceAccountName: app-sa\n      containers:\n      - name: nginx\n        image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "sa-exists", Description: "ServiceAccount app-sa exists", Weight: 2, CommandArgs: "get sa app-sa -n ap-05 -o name", ExpectSubstring: "serviceaccount/app-sa"},
+				{ID: "deploy-sa", Description: "Deployment uses serviceAccountName app-sa", Weight: 2, CommandArgs: "get deploy app-deployment -n ap-05 -o jsonpath={.spec.template.spec.serviceAccountName}", ExpectSubstring: "app-sa"},
+			},
+			Cleanup: []string{"delete namespace ap-05 --ignore-not-found"},
+		},
+		{
+			ID:          "ap-07",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Two-container Pod and log second container",
+			Description: "Multi-container pods share a network namespace; logs are per-container.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ap-07"}},
+			Task:        "In namespace ap-07, create a Pod named 'app' with two containers: 'first' (busybox) and 'second' (nginx). For grading, ensure the Pod exists with both containers.",
+			Hints: []string{
+				"Use --dry-run=client -o yaml and add a second container entry",
+				"Verify with kubectl get pod app -o jsonpath={.spec.containers[*].name} -n ap-07 and kubectl logs app -c second -n ap-07",
+			},
+			Solution: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: app\n  namespace: ap-07\nspec:\n  containers:\n  - name: first\n    image: busybox\n    args: [\"sleep\", \"3600\"]\n  - name: second\n    image: nginx",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "pod-exists", Description: "Pod app exists", Weight: 2, CommandArgs: "get pod app -n ap-07 -o name", ExpectSubstring: "pod/app"},
+				{ID: "two-containers", Description: "Pod has containers first and second", Weight: 2, CommandArgs: "get pod app -n ap-07 -o jsonpath={.spec.containers[*].name}", ExpectRegex: "first.*second|second.*first"},
+			},
+			Cleanup: []string{"delete namespace ap-07 --ignore-not-found"},
+		},
+		{
+			ID:          "ap-08",
+			Domain:      models.DomainApplicationDesign,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "PV, PVC and Pod with /usr/share/nginx/html",
+			Description: "A complete storage chain with custom sizes and paths.",
+			Prepare:     []models.SetupStep{{Name: "create namespace", CommandArgs: "create namespace ap-08"}},
+			Task:        "In namespace ap-08, create a PersistentVolume named 'ap-task-pv-volume' with 10Gi hostPath /my/path storageClass manual, a PVC named 'ap-task-pv-claim' with 3Gi storageClass manual, and a Pod named 'ap-task-pv-pod' (nginx, containerPort 80) mounting the PVC at /usr/share/nginx/html (volume task-pv-storage).",
+			Hints: []string{
+				"PV: capacity 10Gi, accessModes ReadWriteOnce, hostPath /my/path, storageClassName manual",
+				"PVC: storage 3Gi, storageClassName manual; Pod: volumes.persistentVolumeClaim.claimName ap-task-pv-claim, mountPath /usr/share/nginx/html",
+			},
+			Solution: "apiVersion: v1\nkind: PersistentVolume\nmetadata:\n  name: ap-task-pv-volume\nspec:\n  capacity:\n    storage: 10Gi\n  accessModes: [ReadWriteOnce]\n  storageClassName: manual\n  hostPath:\n    path: /my/path\n---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: ap-task-pv-claim\n  namespace: ap-08\nspec:\n  storageClassName: manual\n  accessModes: [ReadWriteOnce]\n  resources:\n    requests:\n      storage: 3Gi\n---\napiVersion: v1\nkind: Pod\nmetadata:\n  name: ap-task-pv-pod\n  namespace: ap-08\nspec:\n  containers:\n  - name: task-pv-container\n    image: nginx\n    ports: [{containerPort: 80}]\n    volumeMounts: [{name: task-pv-storage, mountPath: /usr/share/nginx/html}]\n  volumes: [{name: task-pv-storage, persistentVolumeClaim: {claimName: ap-task-pv-claim}}]",
+			Weight:   8,
+			Checks: []models.Check{
+				{ID: "pv-exists", Description: "PV ap-task-pv-volume exists", Weight: 2, CommandArgs: "get pv ap-task-pv-volume -o name", ExpectSubstring: "persistentvolume/ap-task-pv-volume"},
+				{ID: "pv-capacity", Description: "PV capacity 10Gi", Weight: 1, CommandArgs: "get pv ap-task-pv-volume -o jsonpath={.spec.capacity.storage}", ExpectSubstring: "10Gi"},
+				{ID: "pvc-exists", Description: "PVC ap-task-pv-claim exists", Weight: 2, CommandArgs: "get pvc ap-task-pv-claim -n ap-08 -o name", ExpectSubstring: "persistentvolumeclaim/ap-task-pv-claim"},
+				{ID: "pod-mount", Description: "Pod mounts at /usr/share/nginx/html", Weight: 3, CommandArgs: "get pod ap-task-pv-pod -n ap-08 -o jsonpath={.spec.containers[0].volumeMounts[0].mountPath}", ExpectSubstring: "/usr/share/nginx/html"},
+			},
+			Cleanup: []string{"delete namespace ap-08 --ignore-not-found", "delete pv ap-task-pv-volume --ignore-not-found"},
+		},
+		{
+			ID:          "ap-09",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Deployment image update and rollback",
+			Description: "Deployments support rolling updates and rollbacks.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ap-09"},
+				{Name: "create deployment", CommandArgs: "create deployment prod-deployment --image=nginx:1.15.9 --replicas=4 -n ap-09"},
+				{Name: "update image", CommandArgs: "set image deployment/prod-deployment nginx=nginx:1.13.6 -n ap-09"},
+			},
+			Task: "In namespace ap-09, Deployment prod-deployment was created with nginx:1.15.9 (4 replicas) and then updated to nginx:1.13.6. Roll it back to the previous revision (nginx:1.15.9) using rollout undo.",
+			Hints: []string{
+				"kubectl rollout undo deployment/prod-deployment -n ap-09",
+				"Verify with kubectl get deployment prod-deployment -o jsonpath={.spec.template.spec.containers[0].image} -n ap-09",
+			},
+			Solution: "kubectl rollout undo deployment/prod-deployment -n ap-09",
+			Weight:   4,
+			Checks: []models.Check{
+				{ID: "image-rolled-back", Description: "Image rolled back to nginx:1.15.9", Weight: 4, CommandArgs: "get deploy prod-deployment -n ap-09 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "nginx:1.15.9"},
+			},
+			Cleanup: []string{"delete namespace ap-09 --ignore-not-found"},
+		},
+		{
+			ID:          "ap-10",
+			Domain:      models.DomainApplicationDeployment,
+			Difficulty:  models.DifficultyMedium,
+			Title:       "Debug deployment with wrong image",
+			Description: "Debugging deployments often involves fixing image names and commands.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ap-10"},
+				{Name: "create broken deployment", Namespace: "ap-10", YAML: "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: debug-deployment\nspec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: debug-deployment\n  template:\n    metadata:\n      labels:\n        app: debug-deployment\n    spec:\n      containers:\n      - name: busyboxx\n        image: busyboxx"},
+			},
+			Task: "In namespace ap-10, Deployment debug-deployment (3 replicas) was created with a broken image 'busyboxx' and no command. Fix it to use image 'busybox' with command [\"/bin/sh\"] and args [\"-c\", \"while true; do sleep 10;done\"] so all pods become Running.",
+			Hints: []string{
+				"kubectl set image deployment/debug-deployment busyboxx=busybox -n ap-10, then patch or edit to add command and args",
+				"Or kubectl edit deployment debug-deployment -n ap-10 and fix image, command, args",
+			},
+			Solution: "kubectl set image deployment/debug-deployment busyboxx=busybox -n ap-10\nkubectl patch deployment debug-deployment -n ap-10 --type=json -p='[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/command\",\"value\":[\"/bin/sh\"]},{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args\",\"value\":[\"-c\",\"while true; do sleep 10;done\"]}]'",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "image-fixed", Description: "Image is busybox", Weight: 3, CommandArgs: "get deploy debug-deployment -n ap-10 -o jsonpath={.spec.template.spec.containers[0].image}", ExpectSubstring: "busybox"},
+				{ID: "command-fixed", Description: "Container has command /bin/sh", Weight: 3, CommandArgs: "get deploy debug-deployment -n ap-10 -o jsonpath={.spec.template.spec.containers[0].command}", ExpectSubstring: "/bin/sh"},
+			},
+			Cleanup: []string{"delete namespace ap-10 --ignore-not-found"},
+		},
+		{
+			ID:          "ap-11",
+			Domain:      models.DomainServicesNetworking,
+			Difficulty:  models.DifficultyHard,
+			Title:       "NetworkPolicy db from web on 3306",
+			Description: "NetworkPolicies can restrict ingress to specific ports and sources.",
+			Prepare: []models.SetupStep{
+				{Name: "create namespace", CommandArgs: "create namespace ap-11"},
+				{Name: "create web1", Namespace: "ap-11", YAML: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: web1\n  labels:\n    tier: web\nspec:\n  containers:\n  - name: web1\n    image: nginx"},
+				{Name: "create db", Namespace: "ap-11", YAML: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: db\n  labels:\n    tier: db\nspec:\n  containers:\n  - name: mysql\n    image: mysql:latest\n    env:\n    - {name: MYSQL_USER, value: mysql}\n    - {name: MYSQL_PASSWORD, value: mysql}\n    - {name: MYSQL_DATABASE, value: sample}\n    - {name: MYSQL_ROOT_PASSWORD, value: supersecret}\n    ports:\n    - {containerPort: 3306}"},
+			},
+			Task: "In namespace ap-11, Pods web1 (tier=web) and db (tier=db, port 3306) already exist. Create a NetworkPolicy named 'db-ingress-web' that allows ingress to pods with tier=db only from pods with tier=web on TCP port 3306.",
+			Hints: []string{
+				"podSelector tier=db, ingress from podSelector tier=web, ports port 3306 protocol TCP",
+				"apiVersion networking.k8s.io/v1, kind NetworkPolicy, policyTypes Ingress",
+			},
+			Solution: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: db-ingress-web\n  namespace: ap-11\nspec:\n  podSelector:\n    matchLabels:\n      tier: db\n  policyTypes: [Ingress]\n  ingress:\n  - from:\n    - podSelector:\n        matchLabels:\n          tier: web\n    ports:\n    - port: 3306\n      protocol: TCP",
+			Weight:   6,
+			Checks: []models.Check{
+				{ID: "netpol-exists", Description: "NetworkPolicy db-ingress-web exists", Weight: 2, CommandArgs: "get networkpolicy db-ingress-web -n ap-11 -o name", ExpectSubstring: "networkpolicy.networking.k8s.io/db-ingress-web"},
+				{ID: "pod-selector", Description: "Selects tier=db", Weight: 2, CommandArgs: "get networkpolicy db-ingress-web -n ap-11 -o jsonpath={.spec.podSelector.matchLabels.tier}", ExpectSubstring: "db"},
+				{ID: "ingress-port", Description: "Allows port 3306", Weight: 2, CommandArgs: "get networkpolicy db-ingress-web -n ap-11 -o jsonpath={.spec.ingress[0].ports[0].port}", ExpectSubstring: "3306"},
+			},
+			Cleanup: []string{"delete namespace ap-11 --ignore-not-found"},
 		},
 	}
 }

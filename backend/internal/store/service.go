@@ -117,6 +117,10 @@ func (s *Service) GetQuestion(id string) (*models.Question, error) {
 // environment. If no question IDs are provided, a balanced set is picked
 // automatically across all CKAD domains.
 func (s *Service) StartSession(ctx context.Context, req dto.StartSessionRequest) (*dto.StartSessionResponse, error) {
+	// Wipe any leftover state from previous exams (cluster namespaces and
+	// stored sessions/attempts) so every new exam starts completely fresh.
+	s.resetPriorState(ctx)
+
 	ids := req.QuestionIDs
 	if len(ids) == 0 {
 		picked, err := s.pickQuestionSet()
@@ -149,6 +153,43 @@ func (s *Service) StartSession(ctx context.Context, req dto.StartSessionRequest)
 		DurationLimit: sess.DurationLimit,
 		PrepLog:       prepLog,
 	}, nil
+}
+
+// resetPriorState wipes any state left behind by previous exam sessions so
+// the new exam begins from a clean cluster and an empty store. It is
+// best-effort: failures are ignored and never prevent a new session from
+// starting.
+func (s *Service) resetPriorState(ctx context.Context) {
+	// 1. Run every prior session's own cleanup commands (covers cluster-scoped
+	//    and namespaced resources created by those questions).
+	if sessions, err := s.repo.ListSessions(); err == nil {
+		var cmds []string
+		for _, sess := range sessions {
+			for _, id := range sess.QuestionIDs {
+				if q, e := s.repo.GetQuestion(id); e == nil {
+					cmds = append(cmds, q.Cleanup...)
+				}
+			}
+		}
+		if len(cmds) > 0 {
+			s.checker.Cleanup(ctx, cmds)
+		}
+	}
+
+	// 2. Safety net: delete any exam namespace (prefixed "ckad-") still
+	//    lingering in the cluster, e.g. from a crashed or untracked session.
+	s.checker.ResetCluster(ctx)
+
+	// 3. Drop all prior sessions and their attempts from the store so old
+	//    answers never leak into the new exam.
+	if sessions, err := s.repo.ListSessions(); err == nil {
+		for _, sess := range sessions {
+			for _, a := range sess.Attempts {
+				_ = s.repo.DeleteAttempt(a.ID)
+			}
+			_ = s.repo.DeleteSession(sess.ID)
+		}
+	}
 }
 
 // questionsFor loads the questions for the given IDs (skipping unknowns).
@@ -352,10 +393,13 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 		}
 	}
 
-	// Grade every question in the session against the live cluster.
-	attempts := make([]*models.Attempt, 0, len(sess.QuestionIDs))
-	for _, qid := range sess.QuestionIDs {
-		q, err := s.repo.GetQuestion(qid)
+	// Grade ONLY questions the candidate actually attempted. Unattempted
+	// questions contribute zero to the earned score while their weight is
+	// still counted in the session max (see sessionScore), so doing
+	// nothing scores 0%.
+	attempts := make([]*models.Attempt, 0, len(sess.Attempts))
+	for _, prev := range sess.Attempts {
+		q, err := s.repo.GetQuestion(prev.QuestionID)
 		if err != nil {
 			continue
 		}
@@ -369,16 +413,16 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 			}
 		}
 		attempts = append(attempts, &models.Attempt{
-			ID:           uuid.NewString(),
+			ID:           prev.ID,
 			SessionID:    sess.ID,
 			QuestionID:   q.ID,
-			Answer:       models.Answer{Text: "", TimeSpentSeconds: 0},
+			Answer:       prev.Answer,
 			CheckResults: checkResults,
 			IsCorrect:    allPassed,
-			HintCount:    0,
+			HintCount:    prev.HintCount,
 			Score:        earned,
-			StartedAt:    sess.StartedAt,
-			SubmittedAt:  time.Now().UTC(),
+			StartedAt:    prev.StartedAt,
+			SubmittedAt:  prev.SubmittedAt,
 		})
 	}
 
@@ -402,25 +446,53 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 		passed = earned*100/max >= PassScore
 	}
 
-	results := make([]dto.AttemptResult, 0, len(attempts))
-	for _, a := range attempts {
-		q, err := s.repo.GetQuestion(a.QuestionID)
+	results := make([]dto.AttemptResult, 0, len(sess.QuestionIDs))
+	for _, qid := range sess.QuestionIDs {
+		q, err := s.repo.GetQuestion(qid)
 		if err != nil {
 			continue
 		}
-		results = append(results, dto.AttemptResult{
-			AttemptID:  a.ID,
-			QuestionID: a.QuestionID,
-			Question:   q.Title,
-			Task:       q.Task,
-			Domain:     q.Domain,
-			Difficulty: q.Difficulty,
-			IsCorrect:  a.IsCorrect,
-			Score:      a.Score,
-			MaxScore:   q.Weight,
-			Checks:     a.CheckResults,
-			Solution:   q.Solution,
-		})
+		// Look up the graded attempt for this question (if the candidate
+		// actually submitted an answer during the exam).
+		var matched *models.Attempt
+		for _, a := range attempts {
+			if a.QuestionID == qid {
+				matched = a
+				break
+			}
+		}
+		if matched != nil {
+			results = append(results, dto.AttemptResult{
+				AttemptID:  matched.ID,
+				QuestionID: q.ID,
+				Question:   q.Title,
+				Task:       q.Task,
+				Domain:     q.Domain,
+				Difficulty: q.Difficulty,
+				IsCorrect:  matched.IsCorrect,
+				Score:      matched.Score,
+				MaxScore:   q.Weight,
+				Checks:     matched.CheckResults,
+				Solution:   q.Solution,
+			})
+		} else {
+			// Unattempted — show in review with score 0 and reference
+			// solution so the candidate can learn from it, but the zero
+			// score does NOT count toward earned (see sessionScore).
+			results = append(results, dto.AttemptResult{
+				AttemptID:  "",
+				QuestionID: q.ID,
+				Question:   q.Title,
+				Task:       q.Task,
+				Domain:     q.Domain,
+				Difficulty: q.Difficulty,
+				IsCorrect:  false,
+				Score:      0,
+				MaxScore:   q.Weight,
+				Checks:     nil,
+				Solution:   q.Solution,
+			})
+		}
 	}
 
 	return &dto.EndSessionResponse{

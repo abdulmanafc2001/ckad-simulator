@@ -118,7 +118,7 @@ export interface AttemptResult {
   isCorrect: boolean
   score: number
   maxScore: number
-  checks: CheckResult[]
+  checks: CheckResult[] | null
   solution: string
 }
 

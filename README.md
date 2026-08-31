@@ -4,7 +4,7 @@
 
 **A free, open-source practice simulator for the Certified Kubernetes Application Developer (CKAD) exam**
 
-[![Questions](https://img.shields.io/badge/questions-1013-blue)](#question-bank)
+[![Questions](https://img.shields.io/badge/questions-93-blue)](#question-bank)
 [![Domains](https://img.shields.io/badge/domains-5-green)](#question-bank)
 [![License: MIT](https://img.shields.io/badge/license-MIT-purple)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](https://go.dev)
@@ -41,7 +41,7 @@ graph LR
 - 🧪 **Self-contained tasks** — each question creates & cleans up its own namespace
 - ⏱️ **Exam mode** — 2-hour timer, domain-weighted random selection,
   results hidden until you submit (just like the real thing)
-- 📚 **1013 questions** across all five CKAD domains and three difficulty levels
+- 📚 **93 questions** from [dgkanatsios/ckad-exercises](https://github.com/dgkanatsios/ckad-exercises), [jamesbuckett/ckad-questions](https://github.com/jamesbuckett/ckad-questions), [ibrahimatay/CKAD-Exercises](https://github.com/ibrahimatay/CKAD-Exercises), [bbachi/CKAD-Practice-Questions](https://github.com/bbachi/CKAD-Practice-Questions) and [aleti-pavan/ckad-practice-questions](https://github.com/aleti-pavan/ckad-practice-questions) across all CKAD domains and three difficulty levels
 - 🔍 **Review mode** — after the exam, see exactly which checks failed and why,
   with reference solutions
 
@@ -67,15 +67,12 @@ Open <http://localhost:5173>, hit **Start a 2-hour exam session**, and good luck
 
 | Difficulty | Count |
 |-----------:|------:|
-| Easy       | 150   |
-| Medium     | 257   |
-| Hard       | 606   |
-| **Total**  | **1013** |
+| Easy       | 20    |
+| Medium     | 62    |
+| Hard       | 8     |
+| **Total**  | **93** |
 
-Coverage spans every CKAD domain — pods, deployments, jobs/cronjobs, config &
-secrets, probes, resource management, RBAC/service accounts, quotas, services,
-ingress, network policies, scheduling (affinity/taints), security contexts,
-StatefulSets/DaemonSets, HPA, rollout strategies, the ambassador pattern and more.
+Sources: [dgkanatsios/ckad-exercises](https://github.com/dgkanatsios/ckad-exercises) · [jamesbuckett/ckad-questions](https://github.com/jamesbuckett/ckad-questions) · [ibrahimatay/CKAD-Exercises](https://github.com/ibrahimatay/CKAD-Exercises) · [bbachi/CKAD-Practice-Questions](https://github.com/bbachi/CKAD-Practice-Questions) · [aleti-pavan/ckad-practice-questions](https://github.com/aleti-pavan/ckad-practice-questions) — covering core concepts, multi-container pods, pod design (labels, scheduling, deployments, jobs, cronjobs, blue-green, rollout history, strategic patch, debug), configuration (ConfigMaps, SecurityContext, resources, LimitRanges, ResourceQuotas, Secrets including immutable, ServiceAccounts, RBAC), observability (probes, logging, JSONPath), services & networking (ClusterIP, NodePort, NetworkPolicy, Ingress), and state persistence (emptyDir, PV/PVC, kubectl cp).
 
 ## 🏗️ Architecture
 
@@ -90,7 +87,7 @@ StatefulSets/DaemonSets, HPA, rollout strategies, the ambassador pattern and mor
 
 Issues and PRs are welcome! Good first contributions:
 
-- New question families (follow the generator pattern in `backend/cmd/server/questions_gen*.go`)
+- New questions in `backend/cmd/server/seed.go` (sourced from [dgkanatsios/ckad-exercises](https://github.com/dgkanatsios/ckad-exercises))
 - A persistent session store
 - More locales / UI polish
 

@@ -275,6 +275,46 @@ func (c *Checker) Cleanup(ctx context.Context, cmds []string) []string {
 	return logs
 }
 
+// ResetCluster deletes every exam namespace still lingering in the cluster
+// in a single kubectl call — exam namespaces are prefixed with "ckad-", so
+// we list them once, then pass them all to `kubectl delete namespace ns1
+// ns2 ... --ignore-not-found`.  This is deliberately fast (one round-trip
+// to the API server) so it can run at the start of every new exam without
+// a noticeable delay.
+func (c *Checker) ResetCluster(ctx context.Context) {
+	cctx, cancel := context.WithTimeout(ctx, c.Timeout*3)
+	defer cancel()
+
+	out, err := exec.CommandContext(cctx, c.Binary, "get", "namespace", "-o", "name").CombinedOutput()
+	if err != nil {
+		return
+	}
+
+	var toDelete []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Lines look like "namespace/ckad-xxx".
+		name := strings.TrimPrefix(line, "namespace/")
+		if strings.HasPrefix(name, "ckad-") {
+			toDelete = append(toDelete, name)
+		}
+	}
+
+	if len(toDelete) == 0 {
+		return
+	}
+
+	// Single bulk delete — much faster than one-by-one.
+	args := append([]string{"delete", "namespace"}, toDelete...)
+	args = append(args, "--ignore-not-found", "--wait=false")
+	bulkCtx, bulkCancel := context.WithTimeout(ctx, c.Timeout*3)
+	defer bulkCancel()
+	_ = exec.CommandContext(bulkCtx, c.Binary, args...).Run()
+}
+
 // ClusterStatus verifies connectivity to the cluster and returns the
 // control-plane line from `kubectl cluster-info`.
 func (c *Checker) ClusterStatus(ctx context.Context) (connected bool, detail string) {

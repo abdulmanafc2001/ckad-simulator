@@ -54,11 +54,13 @@ graph LR
 # 1. Start a local Kubernetes cluster
 minikube start
 
-# 2. Backend (terminal 1)
-cd backend && go run ./cmd/server          # http://localhost:8080
-
-# 3. Frontend (terminal 2)
-cd frontend && npm install && npm run dev  # http://localhost:5173
+# 2. Run everything with one command
+make run          # backend http://localhost:8080 + frontend http://localhost:5173
+# Or run separately:
+#   make run-backend   # only Go API
+#   make run-frontend  # only Vite dev server
+#   make install       # install frontend deps
+#   make build         # production build
 ```
 
 Open <http://localhost:5173>, hit **Start a 2-hour exam session**, and good luck! 🍀

@@ -393,13 +393,21 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 		}
 	}
 
-	// Grade ONLY questions the candidate actually attempted. Unattempted
-	// questions contribute zero to the earned score while their weight is
-	// still counted in the session max (see sessionScore), so doing
-	// nothing scores 0%.
-	attempts := make([]*models.Attempt, 0, len(sess.Attempts))
-	for _, prev := range sess.Attempts {
-		q, err := s.repo.GetQuestion(prev.QuestionID)
+	// Grade every question in the session against the live cluster.
+	// This is the killer.sh model: candidates solve tasks via the terminal
+	// (kubectl) and grading inspects cluster state at the end. We must
+	// grade ALL questions, not just those with a prior SubmitAnswer call —
+	// the exam UI never calls SubmitAnswer, it only uses the terminal.
+	// If a prior attempt exists (e.g. via direct API use), preserve its
+	// metadata (Answer, HintCount, timestamps) but re-grade the checks.
+	prevByQID := make(map[string]*models.Attempt, len(sess.Attempts))
+	for _, a := range sess.Attempts {
+		prevByQID[a.QuestionID] = a
+	}
+
+	attempts := make([]*models.Attempt, 0, len(sess.QuestionIDs))
+	for _, qid := range sess.QuestionIDs {
+		q, err := s.repo.GetQuestion(qid)
 		if err != nil {
 			continue
 		}
@@ -412,17 +420,30 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 				allPassed = false
 			}
 		}
+		prev := prevByQID[qid]
+		attemptID := uuid.NewString()
+		answer := models.Answer{Text: "", TimeSpentSeconds: 0}
+		hintCount := 0
+		startedAt := sess.StartedAt
+		submittedAt := time.Now().UTC()
+		if prev != nil {
+			attemptID = prev.ID
+			answer = prev.Answer
+			hintCount = prev.HintCount
+			startedAt = prev.StartedAt
+			submittedAt = prev.SubmittedAt
+		}
 		attempts = append(attempts, &models.Attempt{
-			ID:           prev.ID,
+			ID:           attemptID,
 			SessionID:    sess.ID,
 			QuestionID:   q.ID,
-			Answer:       prev.Answer,
+			Answer:       answer,
 			CheckResults: checkResults,
 			IsCorrect:    allPassed,
-			HintCount:    prev.HintCount,
+			HintCount:    hintCount,
 			Score:        earned,
-			StartedAt:    prev.StartedAt,
-			SubmittedAt:  prev.SubmittedAt,
+			StartedAt:    startedAt,
+			SubmittedAt:  submittedAt,
 		})
 	}
 
@@ -446,53 +467,25 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 		passed = earned*100/max >= PassScore
 	}
 
-	results := make([]dto.AttemptResult, 0, len(sess.QuestionIDs))
-	for _, qid := range sess.QuestionIDs {
-		q, err := s.repo.GetQuestion(qid)
+	results := make([]dto.AttemptResult, 0, len(attempts))
+	for _, a := range attempts {
+		q, err := s.repo.GetQuestion(a.QuestionID)
 		if err != nil {
 			continue
 		}
-		// Look up the graded attempt for this question (if the candidate
-		// actually submitted an answer during the exam).
-		var matched *models.Attempt
-		for _, a := range attempts {
-			if a.QuestionID == qid {
-				matched = a
-				break
-			}
-		}
-		if matched != nil {
-			results = append(results, dto.AttemptResult{
-				AttemptID:  matched.ID,
-				QuestionID: q.ID,
-				Question:   q.Title,
-				Task:       q.Task,
-				Domain:     q.Domain,
-				Difficulty: q.Difficulty,
-				IsCorrect:  matched.IsCorrect,
-				Score:      matched.Score,
-				MaxScore:   q.Weight,
-				Checks:     matched.CheckResults,
-				Solution:   q.Solution,
-			})
-		} else {
-			// Unattempted — show in review with score 0 and reference
-			// solution so the candidate can learn from it, but the zero
-			// score does NOT count toward earned (see sessionScore).
-			results = append(results, dto.AttemptResult{
-				AttemptID:  "",
-				QuestionID: q.ID,
-				Question:   q.Title,
-				Task:       q.Task,
-				Domain:     q.Domain,
-				Difficulty: q.Difficulty,
-				IsCorrect:  false,
-				Score:      0,
-				MaxScore:   q.Weight,
-				Checks:     nil,
-				Solution:   q.Solution,
-			})
-		}
+		results = append(results, dto.AttemptResult{
+			AttemptID:  a.ID,
+			QuestionID: a.QuestionID,
+			Question:   q.Title,
+			Task:       q.Task,
+			Domain:     q.Domain,
+			Difficulty: q.Difficulty,
+			IsCorrect:  a.IsCorrect,
+			Score:      a.Score,
+			MaxScore:   q.Weight,
+			Checks:     a.CheckResults,
+			Solution:   q.Solution,
+		})
 	}
 
 	return &dto.EndSessionResponse{

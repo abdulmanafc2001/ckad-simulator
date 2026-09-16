@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/rand"
+	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/checker"
@@ -19,6 +23,11 @@ const (
 	// PassScore is the minimum percentage required to pass the CKAD exam.
 	PassScore = 66
 )
+
+// ErrClusterUnavailable is returned when an exam cannot start because the
+// Kubernetes cluster is unreachable. Callers map it to 503.
+var ErrClusterUnavailable = errors.New(
+	"kubernetes cluster is not reachable — start it with `minikube start` and try again")
 
 // Service contains the application business logic.
 type Service struct {
@@ -117,6 +126,17 @@ func (s *Service) GetQuestion(id string) (*models.Question, error) {
 // environment. If no question IDs are provided, a balanced set is picked
 // automatically across all CKAD domains.
 func (s *Service) StartSession(ctx context.Context, req dto.StartSessionRequest) (*dto.StartSessionResponse, error) {
+	// Refuse before touching anything. Without a cluster every prepare step
+	// and every check fails, which would hand the candidate a silently
+	// broken 2-hour exam that can only score zero — and resetting first
+	// would discard the previous session's state for nothing.
+	if connected, detail := s.checker.ClusterStatus(ctx); !connected {
+		if detail = strings.TrimSpace(detail); detail != "" {
+			return nil, fmt.Errorf("%w (%s)", ErrClusterUnavailable, firstLine(detail))
+		}
+		return nil, ErrClusterUnavailable
+	}
+
 	// Wipe any leftover state from previous exams (cluster namespaces and
 	// stored sessions/attempts) so every new exam starts completely fresh.
 	s.resetPriorState(ctx)
@@ -144,6 +164,12 @@ func (s *Service) StartSession(ctx context.Context, req dto.StartSessionRequest)
 		return nil, err
 	}
 
+	// resetPriorState deletes namespaces without waiting, so this exam's own
+	// namespaces may still be terminating. Creating one in that state fails,
+	// which used to leave tasks unprepared — and stale resources behind that
+	// scored points nobody earned.
+	s.checker.WaitNamespacesGone(ctx, s.namespacesFor(ids))
+
 	prepLog := s.checker.Prepare(ctx, s.questionsFor(ids))
 
 	return &dto.StartSessionResponse{
@@ -155,19 +181,41 @@ func (s *Service) StartSession(ctx context.Context, req dto.StartSessionRequest)
 	}, nil
 }
 
+// nsCreateRe and nsDeleteRe extract the namespace a question provisions or
+// tears down, so a reset can collect exactly the namespaces the question
+// bank owns.
+var (
+	nsCreateRe = regexp.MustCompile(`^create\s+(?:namespace|ns)\s+(\S+)`)
+	nsDeleteRe = regexp.MustCompile(`^delete\s+(?:namespace|ns)\s+`)
+)
+
 // resetPriorState wipes any state left behind by previous exam sessions so
 // the new exam begins from a clean cluster and an empty store. It is
 // best-effort: failures are ignored and never prevent a new session from
 // starting.
 func (s *Service) resetPriorState(ctx context.Context) {
-	// 1. Run every prior session's own cleanup commands (covers cluster-scoped
-	//    and namespaced resources created by those questions).
+	// 1. Run the prior sessions' cleanup commands that delete cluster-scoped
+	//    resources (PersistentVolumes and friends), which no namespace
+	//    deletion would remove. Namespace deletes are skipped here and
+	//    handled in bulk by step 2: running them one at a time, once per
+	//    prior session, is what made starting an exam take minutes.
+	//    Commands are de-duplicated — sessions share questions.
 	if sessions, err := s.repo.ListSessions(); err == nil {
+		seen := map[string]bool{}
 		var cmds []string
 		for _, sess := range sessions {
 			for _, id := range sess.QuestionIDs {
-				if q, e := s.repo.GetQuestion(id); e == nil {
-					cmds = append(cmds, q.Cleanup...)
+				q, e := s.repo.GetQuestion(id)
+				if e != nil {
+					continue
+				}
+				for _, cm := range q.Cleanup {
+					cm = strings.TrimSpace(cm)
+					if cm == "" || seen[cm] || nsDeleteRe.MatchString(cm) {
+						continue
+					}
+					seen[cm] = true
+					cmds = append(cmds, cm)
 				}
 			}
 		}
@@ -176,9 +224,10 @@ func (s *Service) resetPriorState(ctx context.Context) {
 		}
 	}
 
-	// 2. Safety net: delete any exam namespace (prefixed "ckad-") still
-	//    lingering in the cluster, e.g. from a crashed or untracked session.
-	s.checker.ResetCluster(ctx)
+	// 2. Delete every namespace the question bank owns that is still
+	//    lingering, in one bulk call — this also covers namespaces from a
+	//    crashed or untracked session, which the store knows nothing about.
+	s.checker.ResetCluster(ctx, s.examNamespaces())
 
 	// 3. Drop all prior sessions and their attempts from the store so old
 	//    answers never leak into the new exam.
@@ -190,6 +239,51 @@ func (s *Service) resetPriorState(ctx context.Context) {
 			_ = s.repo.DeleteSession(sess.ID)
 		}
 	}
+}
+
+// examNamespaces returns every namespace the whole question bank
+// provisions. Only these are ever deleted by a reset, so a cluster shared
+// with other work keeps its own namespaces.
+func (s *Service) examNamespaces() []string {
+	qs, err := s.repo.ListQuestions()
+	if err != nil {
+		return nil
+	}
+	return namespacesOf(qs)
+}
+
+// namespacesFor returns the namespaces used by the given question IDs.
+func (s *Service) namespacesFor(ids []string) []string {
+	return namespacesOf(s.questionsFor(ids))
+}
+
+// namespacesOf collects the namespaces a set of questions creates, from
+// both their prepare steps and their cleanup commands.
+func namespacesOf(qs []*models.Question) []string {
+	set := map[string]struct{}{}
+	for _, q := range qs {
+		for _, step := range q.Prepare {
+			if step.Namespace != "" {
+				set[step.Namespace] = struct{}{}
+			}
+			if m := nsCreateRe.FindStringSubmatch(strings.TrimSpace(step.CommandArgs)); m != nil {
+				set[m[1]] = struct{}{}
+			}
+		}
+		for _, cm := range q.Cleanup {
+			fields := strings.Fields(cm)
+			if len(fields) >= 3 && fields[0] == "delete" &&
+				(fields[1] == "namespace" || fields[1] == "ns") {
+				set[fields[2]] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // questionsFor loads the questions for the given IDs (skipping unknowns).
@@ -310,6 +404,11 @@ func (s *Service) SubmitAnswer(ctx context.Context, sessionID string, req dto.Su
 	}
 	if sess.EndedAt != nil {
 		return nil, errors.New("session already ended")
+	}
+	// The 2-hour limit is enforced here as well as in the browser: a timer
+	// the client owns alone is no limit at all.
+	if time.Now().UTC().After(sess.StartedAt.Add(sess.DurationLimit)) {
+		return nil, errors.New("session time limit has expired")
 	}
 
 	question, err := s.repo.GetQuestion(req.QuestionID)
@@ -516,6 +615,15 @@ func (s *Service) sessionScore(sess *models.Session) (earned, max int) {
 		earned += a.Score
 	}
 	return earned, max
+}
+
+// firstLine trims a multi-line kubectl error down to its first line, which
+// carries the useful part ("connection refused", "no such host").
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return s
 }
 
 // contains reports whether id is present in ids.

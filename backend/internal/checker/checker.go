@@ -229,6 +229,17 @@ func (c *Checker) Prepare(ctx context.Context, qs []*models.Question) []string {
 }
 
 func (c *Checker) runStep(ctx context.Context, questionID string, step models.SetupStep) []string {
+	// A file step touches the sandbox, not the cluster.
+	if step.File != "" {
+		status := "ok"
+		detail := step.File
+		if err := c.WriteFile(step.File, step.FileContent); err != nil {
+			status = "failed"
+			detail = err.Error()
+		}
+		return []string{fmt.Sprintf("[%s] %s: %s — %s", questionID, step.Name, status, detail)}
+	}
+
 	var args []string
 	switch {
 	case step.YAML != "":
@@ -275,13 +286,24 @@ func (c *Checker) Cleanup(ctx context.Context, cmds []string) []string {
 	return logs
 }
 
+// protectedNamespaces are never deleted by a reset, even if a question
+// happens to name one. Losing kube-system to an exam reset would take the
+// cluster with it.
+var protectedNamespaces = map[string]bool{
+	"default": true, "kube-system": true, "kube-public": true,
+	"kube-node-lease": true,
+}
+
 // ResetCluster deletes every exam namespace still lingering in the cluster
-// in a single kubectl call — exam namespaces are prefixed with "ckad-", so
-// we list them once, then pass them all to `kubectl delete namespace ns1
-// ns2 ... --ignore-not-found`.  This is deliberately fast (one round-trip
-// to the API server) so it can run at the start of every new exam without
-// a noticeable delay.
-func (c *Checker) ResetCluster(ctx context.Context) {
+// in a single kubectl call. `owned` lists the namespaces the question bank
+// provisions — only those (plus anything prefixed "ckad-") are collected,
+// so namespaces belonging to whoever else uses the cluster are left alone.
+//
+// Passing the owned set in matters: exam questions name their namespaces
+// freely ("q34", "ap-11", "ingress-namespace"), so a prefix rule alone
+// collects nothing and stale resources survive into the next exam, where
+// they score points nobody earned.
+func (c *Checker) ResetCluster(ctx context.Context, owned []string) {
 	cctx, cancel := context.WithTimeout(ctx, c.Timeout*3)
 	defer cancel()
 
@@ -290,15 +312,23 @@ func (c *Checker) ResetCluster(ctx context.Context) {
 		return
 	}
 
+	ownedSet := make(map[string]bool, len(owned))
+	for _, n := range owned {
+		ownedSet[strings.TrimSpace(n)] = true
+	}
+
 	var toDelete []string
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		// Lines look like "namespace/ckad-xxx".
+		// Lines look like "namespace/q34".
 		name := strings.TrimPrefix(line, "namespace/")
-		if strings.HasPrefix(name, "ckad-") {
+		if protectedNamespaces[name] || strings.HasPrefix(name, "kube-") {
+			continue
+		}
+		if ownedSet[name] || strings.HasPrefix(name, "ckad-") {
 			toDelete = append(toDelete, name)
 		}
 	}
@@ -313,6 +343,55 @@ func (c *Checker) ResetCluster(ctx context.Context) {
 	bulkCtx, bulkCancel := context.WithTimeout(ctx, c.Timeout*3)
 	defer bulkCancel()
 	_ = exec.CommandContext(bulkCtx, c.Binary, args...).Run()
+}
+
+const (
+	// namespaceDeleteTimeout bounds how long a new exam waits for the
+	// previous one's namespaces to finish terminating.
+	namespaceDeleteTimeout = 90 * time.Second
+	// namespacePollInterval is how often that wait re-checks.
+	namespacePollInterval = time.Second
+)
+
+// WaitNamespacesGone blocks until the given namespaces have finished
+// deleting. ResetCluster deletes without waiting (it must stay fast), so a
+// new exam would otherwise race the previous one's teardown: creating a
+// resource in a Terminating namespace is rejected, leaving the task
+// unprepared. Bounded: on timeout it returns and lets Prepare report
+// whatever it finds.
+//
+// This polls `kubectl get` rather than using `kubectl wait --for=delete`,
+// which errors on already-absent resources and whose --ignore-not-found
+// flag does not exist across kubectl versions.
+func (c *Checker) WaitNamespacesGone(ctx context.Context, names []string) {
+	targets := make([]string, 0, len(names))
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" && !protectedNamespaces[n] {
+			targets = append(targets, n)
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+
+	args := append([]string{"get", "namespace", "--ignore-not-found", "-o", "name"}, targets...)
+	deadline := time.Now().Add(namespaceDeleteTimeout)
+	for {
+		cctx, cancel := context.WithTimeout(ctx, c.Timeout)
+		out, err := exec.CommandContext(cctx, c.Binary, args...).Output()
+		cancel()
+		if err == nil && len(bytes.TrimSpace(out)) == 0 {
+			return // all gone
+		}
+		if time.Now().After(deadline) {
+			return // give up rather than block the exam indefinitely
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(namespacePollInterval):
+		}
+	}
 }
 
 // ClusterStatus verifies connectivity to the cluster and returns the
@@ -360,6 +439,173 @@ var allowedPrefixes = map[string]bool{
 	// the API is called directly.
 	"vi": false, "vim": false, "view": false, "nano": false,
 	"clear": false, // handled client-side
+}
+
+// pathFreeCommands never open a file named by their arguments, so those
+// arguments are passed through exactly as typed — re-rooting them would
+// corrupt `echo a/b` or `basename /usr/local/bin`.
+var pathFreeCommands = map[string]bool{
+	"echo": true, "printf": true, "seq": true, "date": true, "sleep": true,
+	"whoami": true, "hostname": true, "env": true, "which": true,
+	"tr": true, "rev": true, "basename": true, "dirname": true,
+}
+
+// patternCommands take a search pattern or a script as their first non-flag
+// argument. It must not be treated as a path, or `kubectl get ns -o name |
+// grep namespace/q34` and `sed 's/a/b/'` would break.
+var patternCommands = map[string]bool{"grep": true, "sed": true, "awk": true}
+
+// kubectlFileFlags are the kubectl flags whose value names a file on the
+// exam host. Every other kubectl argument is left untouched: object names,
+// JSONPath expressions and the paths in `kubectl exec pod -- cat /etc/x`
+// refer to the cluster or to a pod's filesystem, not to the host.
+var kubectlFileFlags = map[string]bool{
+	"-f": true, "--filename": true,
+	"-k": true, "--kustomize": true,
+	"--from-file": true, "--from-env-file": true,
+	"--kubeconfig":            true,
+	"--client-certificate":    true,
+	"--client-key":            true,
+	"--certificate-authority": true,
+	"--patch-file":            true,
+	"--cert":                  true,
+	"--key":                   true,
+}
+
+// isFlag reports whether a token is an option rather than an operand.
+// A lone "-" is the conventional stdin placeholder, not a flag.
+func isFlag(a string) bool { return len(a) > 1 && strings.HasPrefix(a, "-") }
+
+// refersToPath reports whether an argument names a location on the
+// filesystem. Bare names ("pod.yaml") need no rewriting: commands run with
+// the exam home as their working directory, so they already resolve inside
+// the sandbox. Only arguments that navigate the tree can leave it.
+func refersToPath(a string) bool {
+	return strings.Contains(a, "/") || a == "." || a == ".."
+}
+
+// confineArgs rewrites every argument naming a file on the exam host so it
+// resolves inside the sandbox, and rejects any argument that would escape.
+// Absolute paths are re-rooted chroot-style, exactly as the built-in
+// editors treat them (see ResolvePath), so `/pod.yaml` in the terminal and
+// `/pod.yaml` in vi are the same file.
+func (c *Checker) confineArgs(bin string, args []string) ([]string, error) {
+	if pathFreeCommands[bin] {
+		return args, nil
+	}
+	if bin == c.Binary || bin == DefaultBinary {
+		return c.confineKubectlArgs(args)
+	}
+
+	out := make([]string, len(args))
+	copy(out, args)
+	seenOperand := false
+	for i, a := range out {
+		if isFlag(a) {
+			// `--flag=/path` still carries a path in its value.
+			if name, value, found := strings.Cut(a, "="); found && refersToPath(value) {
+				full, err := c.ResolvePath(value)
+				if err != nil {
+					return nil, err
+				}
+				out[i] = name + "=" + full
+			}
+			continue
+		}
+
+		firstOperand := !seenOperand
+		seenOperand = true
+
+		if strings.Contains(a, "://") {
+			if strings.HasPrefix(strings.ToLower(a), "file://") {
+				return nil, fmt.Errorf("local file URLs are not available in the exam terminal: %s", a)
+			}
+			continue // a network URL, not a path on this host
+		}
+		// The pattern/script operand is not a path — unless it is spelled
+		// like one ("../x"), in which case it must still be confined.
+		if firstOperand && patternCommands[bin] && !strings.HasPrefix(a, "/") &&
+			!strings.HasPrefix(a, "./") && !strings.HasPrefix(a, "../") {
+			continue
+		}
+		if !refersToPath(a) {
+			continue
+		}
+		full, err := c.ResolvePath(a)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = full
+	}
+	return out, nil
+}
+
+// confineKubectlArgs confines only the kubectl arguments that name a file on
+// the exam host: the values of kubectlFileFlags, and the local side of
+// `kubectl cp`.
+func (c *Checker) confineKubectlArgs(args []string) ([]string, error) {
+	out := make([]string, len(args))
+	copy(out, args)
+
+	isCopy := false
+	for _, a := range out {
+		if !isFlag(a) {
+			isCopy = a == "cp"
+			break
+		}
+	}
+
+	for i := 0; i < len(out); i++ {
+		a := out[i]
+		if name, value, found := strings.Cut(a, "="); found && kubectlFileFlags[name] {
+			conf, err := c.confineFlagValue(value)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = name + "=" + conf
+			continue
+		}
+		if kubectlFileFlags[a] && i+1 < len(out) {
+			conf, err := c.confineFlagValue(out[i+1])
+			if err != nil {
+				return nil, err
+			}
+			out[i+1] = conf
+			i++
+			continue
+		}
+		// `kubectl cp <local> pod:/remote` — the operand without a colon is
+		// the one that touches this host.
+		if isCopy && !isFlag(a) && !strings.Contains(a, ":") && refersToPath(a) {
+			full, err := c.ResolvePath(a)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = full
+		}
+	}
+	return out, nil
+}
+
+// confineFlagValue confines the path carried by a kubectl flag value,
+// preserving the `--from-file=key=/path` spelling and the "-" stdin
+// placeholder.
+func (c *Checker) confineFlagValue(v string) (string, error) {
+	if v == "" || v == "-" {
+		return v, nil
+	}
+	if key, path, found := strings.Cut(v, "="); found {
+		full, err := c.ResolvePath(path)
+		if err != nil {
+			return "", err
+		}
+		return key + "=" + full, nil
+	}
+	full, err := c.ResolvePath(v)
+	if err != nil {
+		return "", err
+	}
+	return full, nil
 }
 
 // ExecResult is the outcome of one terminal command execution.
@@ -439,16 +685,13 @@ func (c *Checker) Exec(ctx context.Context, command string) ExecResult {
 			bin = c.Binary
 		}
 
-		// Re-root absolute path arguments that exist inside the exam home so
-		// `kubectl apply -f /tmp/pod.yaml` sees the editor-created file.
-		for idx, a := range args {
-			if filepath.IsAbs(a) {
-				if full, rerr := c.ResolvePath(a); rerr == nil {
-					if _, serr := os.Stat(full); serr == nil {
-						args[idx] = full
-					}
-				}
-			}
+		// Confine every argument that names a file on this host to the exam
+		// sandbox, so `kubectl apply -f /pod.yaml` sees the editor-created
+		// file while `cat /etc/passwd` and `rm ../../thing` cannot reach
+		// the host filesystem.
+		args, cerr := c.confineArgs(bin, args)
+		if cerr != nil {
+			return ExecResult{Output: fmt.Sprintf("ckad-simulator: %v\n", cerr), ExitCode: 1}
 		}
 
 		cmd := exec.CommandContext(cctx, bin, args...)
@@ -480,9 +723,14 @@ func (c *Checker) Exec(ctx context.Context, command string) ExecResult {
 		if err != nil {
 			res := ExecResult{Output: string(out)}
 			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
+			switch {
+			case errors.As(err, &exitErr):
 				res.ExitCode = exitErr.ExitCode()
-			} else {
+			case errors.Is(err, exec.ErrNotFound):
+				// Allow-listed, but the host does not have it installed.
+				res.Output = fmt.Sprintf("%s: not installed in this exam environment\n", bin)
+				res.ExitCode = 127
+			default:
 				res.Output = fmt.Sprintf("%s\n%s", res.Output, err.Error())
 				res.ExitCode = 1
 			}

@@ -35,6 +35,10 @@ export interface SetupStep {
   namespace?: string
   yaml?: string
   command?: string
+  /** Path of a file placed in the exam sandbox before the task starts. */
+  file?: string
+  /** Contents written to `file`. */
+  fileContent?: string
 }
 
 /** One weighted verification executed against the live cluster. */
@@ -64,6 +68,13 @@ export interface Question extends QuestionSummary {
   solution: string
   checks: Check[]
   cleanup: string[]
+}
+
+/** Connectivity to the Kubernetes cluster the exam runs against. */
+export interface ClusterStatus {
+  connected: boolean
+  /** Control-plane line from `kubectl cluster-info`, or the failure output. */
+  detail: string
 }
 
 export interface StartSessionRequest {

@@ -72,16 +72,34 @@ export default function App() {
     setView('home')
   }, [])
 
+  // Leaving mid-exam loses the session, so the browser asks first. Only armed
+  // while a session is actually in progress.
+  useEffect(() => {
+    if (view !== 'exam') return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault()
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [view])
+
+  const inExam = view === 'exam'
+
   return (
-    <div className="app">
+    <div className={`app ${inExam ? 'in-exam' : ''}`}>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+
       <header className="app-header">
-        <div className="brand" onClick={handleRestart} role="button" tabIndex={0}>
-          <span className="logo">⎈</span>
+        <button className="brand" onClick={handleRestart} aria-label="CKAD Simulator — home">
+          <span className="logo" aria-hidden="true">
+            ⎈
+          </span>
           <span>CKAD Simulator</span>
-        </div>
+        </button>
         <span className="tagline">Certified Kubernetes Application Developer practice</span>
+        {inExam && <span className="exam-chip">Exam in progress</span>}
         <button
-          className="btn btn-ghost theme-toggle"
+          className="btn btn-ghost btn-icon theme-toggle"
           onClick={toggleTheme}
           aria-label="Toggle color theme"
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -90,7 +108,7 @@ export default function App() {
         </button>
       </header>
 
-      <main className="app-main">
+      <main className="app-main" id="main">
         {view === 'home' && (
           <Home onStart={handleStart} starting={starting} startError={startError} />
         )}
@@ -107,9 +125,13 @@ export default function App() {
         )}
       </main>
 
-      <footer className="app-footer">
-        <span className="muted">Baseline build · in-memory data · heuristic grading</span>
-      </footer>
+      {!inExam && (
+        <footer className="app-footer">
+          <span className="muted">
+            Open-source CKAD practice · graded against live cluster state
+          </span>
+        </footer>
+      )}
     </div>
   )
 }

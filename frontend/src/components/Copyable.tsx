@@ -144,17 +144,53 @@ function tokenize(text: string): Segment[] {
 /**
  * Renders plain text where recognizable values (names, namespaces, paths,
  * key=value pairs, image references) become click-to-copy chips.
+ * Preserves explicit newlines (\n) as line breaks so numbered steps like
+ * "storageClassName: manual\n\n2. In namespace..." never collapse into
+ * "manual2.".
+ * Also auto-inserts breaks before " 2. ", " 3. " etc. when the source
+ * string forgot newlines, so older tasks still render correctly.
  */
+function withStepBreaks(text: string): string {
+  // Insert a newline before " 2. ", " 3. " ... if not already after a newline.
+  // Avoid touching "1. " at the very start.
+  return text.replace(/([^\n])\s+(\d+)\.\s/g, (m, prev, num) => {
+    if (num === '1') return m
+    // Only break for sequential steps 2-9 that look like task numbering
+    if (!/^[2-9]$/.test(num)) return m
+    return `${prev}\n\n${num}. `
+  })
+}
+
 export function CopyableText({ text }: { text: string }) {
+  const normalized = withStepBreaks(text)
+  const lines = normalized.split('\n')
   return (
     <>
-      {tokenize(text).map((seg, i) =>
-        seg.copy ? (
-          <CopyChip key={i} value={seg.copy} display={seg.text} />
-        ) : (
-          <span key={i}>{seg.text}</span>
-        ),
-      )}
+      {lines.map((line, li) => {
+        const isEmpty = line.trim() === ''
+        return (
+          <span
+            key={li}
+            style={{
+              display: li === 0 ? 'inline' : 'block',
+              marginTop: isEmpty ? '0.35em' : li > 0 ? '0.15em' : undefined,
+            }}
+          >
+            {isEmpty ? (
+              // empty line -> vertical spacer
+              <span style={{ display: 'block', height: '0.35em' }} aria-hidden />
+            ) : (
+              tokenize(line).map((seg, i) =>
+                seg.copy ? (
+                  <CopyChip key={`${li}-${i}`} value={seg.copy} display={seg.text} />
+                ) : (
+                  <span key={`${li}-${i}`}>{seg.text}</span>
+                ),
+              )
+            )}
+          </span>
+        )
+      })}
     </>
   )
 }

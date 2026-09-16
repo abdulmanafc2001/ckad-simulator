@@ -61,7 +61,11 @@ func (h *Handler) StartSession(c *gin.Context) {
 	}
 	sess, err := h.svc.StartSession(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		status := http.StatusBadRequest
+		if errors.Is(err, store.ErrClusterUnavailable) {
+			status = http.StatusServiceUnavailable
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusCreated, sess)

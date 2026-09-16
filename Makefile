@@ -1,11 +1,11 @@
-.PHONY: run run-backend run-frontend stop build install clean help
+.PHONY: run run-backend run-frontend stop build install clean help lint e2e
 
 # Default ports (override with e.g. `make run PORT=9090 VITE_PORT=5174`)
 PORT ?= 8080
 VITE_PORT ?= 5173
 
 help: ## Show available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install frontend dependencies
 	cd frontend && npm install
@@ -47,3 +47,6 @@ clean: ## Remove build artifacts
 lint: ## Vet Go code and lint frontend
 	cd backend && go vet ./...
 	cd frontend && npm run lint
+
+e2e: ## Run browser end-to-end tests (needs `make run-backend` and a live cluster)
+	cd frontend && npx playwright test

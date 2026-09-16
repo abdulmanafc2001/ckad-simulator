@@ -41,7 +41,8 @@ export function ExamTerminal({ banner }: TerminalProps) {
   const shellPastingRef = useRef(false)
 
   useEffect(() => {
-    if (!hostRef.current) return
+    const host = hostRef.current
+    if (!host) return
 
     const term = new XTerm({
       cursorBlink: true,
@@ -61,8 +62,11 @@ export function ExamTerminal({ banner }: TerminalProps) {
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
-    term.open(hostRef.current)
+    term.open(host)
     fit.fit()
+    // Land the caret in the terminal so the candidate can start typing
+    // without first having to click into it.
+    term.focus()
     termRef.current = term
 
     // Intercept Ctrl+Shift+V (paste) and Ctrl+Shift+C (copy). These are
@@ -88,7 +92,7 @@ export function ExamTerminal({ banner }: TerminalProps) {
         }
       }
     }
-    hostRef.current.addEventListener('keydown', onKeyDown)
+    host.addEventListener('keydown', onKeyDown)
 
     // Bracketed paste: pasted text arrives wrapped in \x1b[200~ … \x1b[201~
     // so multi-line pastes are handled deliberately instead of being
@@ -418,15 +422,30 @@ export function ExamTerminal({ banner }: TerminalProps) {
       }),
     ]
 
-    const onResize = () => {
-      fit.fit()
-      redrawInput()
+    // Refit on any size change, not just window resizes: the exam pane is
+    // user-resizable (splitter drag, maximize), and an unfitted terminal
+    // wraps its lines at the wrong column.
+    let raf = 0
+    const refit = () => {
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        try {
+          fit.fit()
+        } catch {
+          // Host detached mid-animation — the next observation refits.
+        }
+        if (!editorRef.current) redrawInput()
+      })
     }
-    window.addEventListener('resize', onResize)
+    window.addEventListener('resize', refit)
+    const observer = new ResizeObserver(refit)
+    observer.observe(host)
 
     return () => {
-      window.removeEventListener('resize', onResize)
-      hostRef.current?.removeEventListener('keydown', onKeyDown)
+      cancelAnimationFrame(raf)
+      observer.disconnect()
+      window.removeEventListener('resize', refit)
+      host.removeEventListener('keydown', onKeyDown)
       disposers.forEach((d) => d.dispose())
       term.dispose()
       termRef.current = null

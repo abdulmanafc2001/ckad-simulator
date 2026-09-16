@@ -33,6 +33,13 @@ type SetupStep struct {
 	YAML string `json:"yaml,omitempty"`
 	// CommandArgs are executed verbatim as `kubectl <CommandArgs>` when set.
 	CommandArgs string `json:"command,omitempty"`
+	// File places a file in the exam sandbox before the task starts, so a
+	// question can hand the candidate a manifest to inspect or repair
+	// ("apply this broken YAML and fix the error"). The path is resolved
+	// inside the sandbox exactly like the built-in editors resolve it.
+	File string `json:"file,omitempty"`
+	// FileContent is written to File. Ignored unless File is set.
+	FileContent string `json:"fileContent,omitempty"`
 }
 
 // Check is one weighted verification executed against the live cluster.

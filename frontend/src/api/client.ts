@@ -2,6 +2,7 @@
 // through /api/v1, which Vite proxies to the Go backend during development.
 
 import type {
+  ClusterStatus,
   EndSessionResponse,
   ExecRequest,
   ExecResponse,
@@ -48,6 +49,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /**
+   * Reports whether the exam cluster is reachable. The endpoint answers 503
+   * (not an error condition for us) when it is down, so this reads the body
+   * either way instead of going through `request`.
+   */
+  async clusterStatus(): Promise<ClusterStatus> {
+    try {
+      const res = await fetch(`${BASE}/cluster/status`, {
+        headers: { 'Content-Type': 'application/json' },
+      })
+      const body = (await res.json()) as Partial<ClusterStatus>
+      return {
+        connected: body.connected === true,
+        detail: body.detail ?? '',
+      }
+    } catch {
+      // The API itself is unreachable — report it the same way.
+      return { connected: false, detail: 'Cannot reach the simulator API on :8080' }
+    }
+  },
+
   listQuestions(): Promise<{ questions: QuestionSummary[] }> {
     return request('/questions')
   },

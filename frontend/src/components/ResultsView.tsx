@@ -7,6 +7,9 @@ import { CopyableText, CopyChip } from './Copyable'
 interface ResultsViewProps {
   results: EndSessionResponse
   onRestart: () => void
+  /** True when this is a past exam opened from the history, not the one
+   *  the candidate just finished. */
+  reviewing?: boolean
 }
 
 type Filter = 'all' | 'failed' | 'passed'
@@ -21,7 +24,19 @@ function formatSpan(startedAt: string, endedAt: string): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-export function ResultsView({ results, onRestart }: ResultsViewProps) {
+/** Formats a past exam's end time as "16 Sep, 14:05". */
+function formatExamDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function ResultsView({ results, onRestart, reviewing = false }: ResultsViewProps) {
   const pct = results.max > 0 ? Math.round((results.earned / results.max) * 100) : 0
   const attempted = results.attempts.filter((a) => a.attemptId !== '')
   const correct = attempted.filter((a) => a.isCorrect).length
@@ -78,6 +93,11 @@ export function ResultsView({ results, onRestart }: ResultsViewProps) {
         </div>
         <div className="results-verdict">
           <h2>{results.passed ? 'Passed' : 'Not passed'}</h2>
+          {reviewing && (
+            <p className="results-archived">
+              Reviewing a past exam from {formatExamDate(results.endedAt)}.
+            </p>
+          )}
           <p className="muted">
             Passing score is {results.passScore}%. You fully solved {correct} of{' '}
             {results.totalQuestions} questions ({attempted.length} attempted) in{' '}
@@ -85,7 +105,7 @@ export function ResultsView({ results, onRestart }: ResultsViewProps) {
             failed and how to solve it.
           </p>
           <button className="btn btn-primary" onClick={onRestart}>
-            Start a new session
+            {reviewing ? 'Back to home' : 'Start a new session'}
           </button>
         </div>
       </section>

@@ -340,6 +340,107 @@
   }
 }
 
+/* Exam history — finished sessions, restored from the persistent store */
+.history-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.history-head h3 {
+  font-size: 1.25rem;
+  margin: 0;
+}
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.history-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.85rem 1.1rem;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--bg-elev);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.history-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  transform: translateY(-1px);
+}
+.history-row:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+}
+.history-verdict {
+  flex: none;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--r-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.history-verdict.pass {
+  color: var(--ok);
+  background: var(--ok-bg);
+}
+.history-verdict.fail {
+  color: var(--bad);
+  background: var(--bad-bg);
+}
+.history-score {
+  flex: none;
+  min-width: 3.5rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-h);
+  font-variant-numeric: tabular-nums;
+}
+.history-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+  font-size: 0.85rem;
+}
+.history-date {
+  color: var(--text-h);
+}
+.history-go {
+  flex: none;
+  font-size: 0.85rem;
+  color: var(--accent-h);
+}
+@media (max-width: 720px) {
+  .history-go {
+    display: none;
+  }
+}
+
+/* Restoring an exam on load, before anything else is rendered */
+.booting {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 4rem 1rem;
+  color: var(--muted);
+}
+
 /* Question bank */
 .bank-head {
   display: flex;
@@ -1047,6 +1148,16 @@ kbd {
 }
 .results-verdict h2 {
   font-size: 1.5rem;
+}
+/* Marks a results screen opened from the history rather than just earned. */
+.results-archived {
+  display: inline-block;
+  margin: 0 0 0.5rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--r-sm);
+  font-size: 0.8rem;
+  color: var(--accent-h);
+  background: var(--accent-soft);
 }
 
 /* Per-domain bars — which curriculum area needs revising. */

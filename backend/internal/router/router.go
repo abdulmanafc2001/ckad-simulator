@@ -52,7 +52,9 @@ func New(svc *store.Service) *gin.Engine {
 		api.GET("/questions/:id", h.GetQuestion)
 
 		api.POST("/sessions", h.StartSession)
+		api.GET("/sessions", h.ListSessions)
 		api.GET("/sessions/:id", h.GetSession)
+		api.GET("/sessions/:id/results", h.SessionResults)
 		api.POST("/sessions/:id/answers", h.SubmitAnswer)
 		api.POST("/sessions/:id/end", h.EndSession)
 		api.POST("/sessions/:id/cleanup", h.CleanupSession)

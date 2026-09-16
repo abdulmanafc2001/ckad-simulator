@@ -16,6 +16,11 @@ frontend/playwright-report/
 frontend/blob-report/
 frontend/.playwright/
 
+# Session database (only lands here if CKAD_DB points into the repo)
+*.db
+*.db-shm
+*.db-wal
+
 # Logs & temp
 *.log
 /tmp/

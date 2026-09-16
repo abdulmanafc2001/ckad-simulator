@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Question, StartSessionResponse } from '../api/types'
 import { DifficultyBadge, DomainBadge, WeightBadge } from './Badges'
 import { CopyableText } from './Copyable'
+import { loadExamProgress, saveExamProgress } from './examProgress'
 import { Modal } from './Modal'
 import { Timer } from './Timer'
 import { ExamTerminal } from './Terminal'
@@ -24,10 +25,14 @@ function initialSplit(): number {
 }
 
 export function ExamView({ session, questions, onFinish, finishing }: ExamViewProps) {
-  const [index, setIndex] = useState(0)
-  const [hintsShown, setHintsShown] = useState<Record<string, number>>({})
-  const [visited, setVisited] = useState<Record<string, boolean>>({})
-  const [flagged, setFlagged] = useState<Record<string, boolean>>({})
+  const [restored] = useState(() => loadExamProgress(session.id))
+  // Clamp: the bank could have changed under a resumed session.
+  const [index, setIndex] = useState(() =>
+    Math.min(Math.max(restored.index, 0), Math.max(questions.length - 1, 0)),
+  )
+  const [hintsShown, setHintsShown] = useState<Record<string, number>>(restored.hintsShown)
+  const [visited, setVisited] = useState<Record<string, boolean>>(restored.visited)
+  const [flagged, setFlagged] = useState<Record<string, boolean>>(restored.flagged)
   const [confirmFinish, setConfirmFinish] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [termMax, setTermMax] = useState(false)
@@ -42,6 +47,12 @@ export function ExamView({ session, questions, onFinish, finishing }: ExamViewPr
   useEffect(() => {
     setVisited((prev) => (prev[question.id] ? prev : { ...prev, [question.id]: true }))
   }, [question.id])
+
+  // Save the progress marks so a resumed exam comes back with the same
+  // flags, hints and current question, not just the same tasks and timer.
+  useEffect(() => {
+    saveExamProgress(session.id, { index, hintsShown, visited, flagged })
+  }, [session.id, index, hintsShown, visited, flagged])
 
   // Changing question must start the reader at the top of the new task, not
   // wherever the previous (possibly long) one was scrolled to.

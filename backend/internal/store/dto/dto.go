@@ -45,6 +45,27 @@ type StartSessionResponse struct {
 	PrepLog       []string      `json:"prepLog,omitempty"`
 }
 
+// SessionSummary is one row of the exam history: enough to list a finished
+// session and its score without loading every attempt.
+type SessionSummary struct {
+	ID             string    `json:"id"`
+	StartedAt      time.Time `json:"startedAt"`
+	EndedAt        time.Time `json:"endedAt"`
+	Earned         int       `json:"earned"`
+	Max            int       `json:"max"`
+	TotalQuestions int       `json:"totalQuestions"`
+	Passed         bool      `json:"passed"`
+}
+
+// SessionsResponse is what the app asks for on load: the exam to resume, if
+// one is still running, plus the finished exams available for review.
+type SessionsResponse struct {
+	// Active is the in-progress session, or nil when there is none.
+	Active *StartSessionResponse `json:"active"`
+	// History lists finished sessions, newest first.
+	History []SessionSummary `json:"history"`
+}
+
 // SubmitAnswerRequest is a user submission for a question in a session.
 type SubmitAnswerRequest struct {
 	QuestionID       string `json:"questionId"`

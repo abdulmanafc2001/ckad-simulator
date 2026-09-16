@@ -13,6 +13,7 @@ import (
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/checker"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/models"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/dto"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/storeerr"
 	"github.com/google/uuid"
 )
 
@@ -229,16 +230,115 @@ func (s *Service) resetPriorState(ctx context.Context) {
 	//    crashed or untracked session, which the store knows nothing about.
 	s.checker.ResetCluster(ctx, s.examNamespaces())
 
-	// 3. Drop all prior sessions and their attempts from the store so old
-	//    answers never leak into the new exam.
+	// 3. Drop unfinished sessions so their answers never leak into the new
+	//    exam, but keep finished ones: they are the candidate's history,
+	//    and with a persistent store they are expected to outlive a
+	//    restart. Deleting a session cascades to its attempts.
 	if sessions, err := s.repo.ListSessions(); err == nil {
+		var finished []*models.Session
 		for _, sess := range sessions {
-			for _, a := range sess.Attempts {
-				_ = s.repo.DeleteAttempt(a.ID)
+			if sess.EndedAt == nil {
+				_ = s.repo.DeleteSession(sess.ID)
+				continue
 			}
-			_ = s.repo.DeleteSession(sess.ID)
+			finished = append(finished, sess)
+		}
+		s.pruneHistory(finished)
+	}
+}
+
+// HistoryLimit is how many finished exams are kept for review. Without a
+// cap the store would grow for as long as the tool is used, and nobody
+// revisits their fortieth-from-last attempt.
+const HistoryLimit = 20
+
+// pruneHistory deletes the oldest finished sessions beyond HistoryLimit.
+func (s *Service) pruneHistory(finished []*models.Session) {
+	if len(finished) <= HistoryLimit {
+		return
+	}
+	// Oldest first, so the excess is at the front.
+	sort.Slice(finished, func(i, j int) bool {
+		return finished[i].EndedAt.Before(*finished[j].EndedAt)
+	})
+	for _, sess := range finished[:len(finished)-HistoryLimit] {
+		_ = s.repo.DeleteSession(sess.ID)
+	}
+}
+
+// ActiveSession returns the exam still in progress, if there is one, so the
+// app can resume it after a reload or a backend restart. A session whose
+// time limit has run out is not resumable — the candidate is sent to the
+// results instead.
+func (s *Service) ActiveSession() (*dto.StartSessionResponse, error) {
+	sessions, err := s.repo.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+
+	var active *models.Session
+	now := time.Now().UTC()
+	for _, sess := range sessions {
+		if sess.EndedAt != nil || now.After(sess.StartedAt.Add(sess.DurationLimit)) {
+			continue
+		}
+		// Newest wins; there should only ever be one.
+		if active == nil || sess.StartedAt.After(active.StartedAt) {
+			active = sess
 		}
 	}
+	if active == nil {
+		return nil, storeerr.ErrNotFound
+	}
+
+	return &dto.StartSessionResponse{
+		ID:            active.ID,
+		QuestionIDs:   active.QuestionIDs,
+		StartedAt:     active.StartedAt,
+		DurationLimit: active.DurationLimit,
+	}, nil
+}
+
+// ListSessionSummaries returns the finished exams, newest first.
+func (s *Service) ListSessionSummaries() ([]dto.SessionSummary, error) {
+	sessions, err := s.repo.ListSessions()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]dto.SessionSummary, 0, len(sessions))
+	for _, sess := range sessions {
+		if sess.EndedAt == nil {
+			continue
+		}
+		earned, max := s.sessionScore(sess)
+		out = append(out, dto.SessionSummary{
+			ID:             sess.ID,
+			StartedAt:      sess.StartedAt,
+			EndedAt:        *sess.EndedAt,
+			Earned:         earned,
+			Max:            max,
+			TotalQuestions: len(sess.QuestionIDs),
+			Passed:         max > 0 && earned*100/max >= PassScore,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].EndedAt.After(out[j].EndedAt) })
+	return out, nil
+}
+
+// SessionResults rebuilds the results of a finished exam from the stored
+// attempts. Nothing is re-graded: the cluster has moved on since (the next
+// exam resets it), so the marks recorded at the time are the only honest
+// answer.
+func (s *Service) SessionResults(sessionID string) (*dto.EndSessionResponse, error) {
+	sess, err := s.repo.GetSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sess.EndedAt == nil {
+		return nil, errors.New("session has not ended yet")
+	}
+	return s.buildResults(sess), nil
 }
 
 // examNamespaces returns every namespace the whole question bank
@@ -560,14 +660,21 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 		return nil, err
 	}
 
+	return s.buildResults(sess), nil
+}
+
+// buildResults renders a finished session's stored attempts as the results
+// payload. It reads only what is in the store, so reviewing an exam later
+// shows exactly the marks it was given when it ended.
+func (s *Service) buildResults(sess *models.Session) *dto.EndSessionResponse {
 	earned, max := s.sessionScore(sess)
 	passed := false
 	if max > 0 {
 		passed = earned*100/max >= PassScore
 	}
 
-	results := make([]dto.AttemptResult, 0, len(attempts))
-	for _, a := range attempts {
+	results := make([]dto.AttemptResult, 0, len(sess.Attempts))
+	for _, a := range sess.Attempts {
 		q, err := s.repo.GetQuestion(a.QuestionID)
 		if err != nil {
 			continue
@@ -587,17 +694,22 @@ func (s *Service) EndSession(ctx context.Context, sessionID string) (*dto.EndSes
 		})
 	}
 
+	endedAt := time.Time{}
+	if sess.EndedAt != nil {
+		endedAt = *sess.EndedAt
+	}
+
 	return &dto.EndSessionResponse{
 		ID:             sess.ID,
 		StartedAt:      sess.StartedAt,
-		EndedAt:        *sess.EndedAt,
+		EndedAt:        endedAt,
 		Earned:         earned,
 		Max:            max,
 		TotalQuestions: len(sess.QuestionIDs),
 		Passed:         passed,
 		PassScore:      PassScore,
 		Attempts:       results,
-	}, nil
+	}
 }
 
 // sessionScore sums earned and max points for a session.

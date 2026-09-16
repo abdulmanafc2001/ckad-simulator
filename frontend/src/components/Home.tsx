@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, ApiError } from '../api/client'
-import type { ClusterStatus, Difficulty, Domain, QuestionSummary } from '../api/types'
+import type {
+  ClusterStatus,
+  Difficulty,
+  Domain,
+  QuestionSummary,
+  SessionSummary,
+} from '../api/types'
 import { DOMAIN_LABELS } from '../api/types'
 import { DifficultyBadge, WeightBadge } from './Badges'
 
@@ -8,6 +14,10 @@ interface HomeProps {
   onStart: () => void
   starting: boolean
   startError?: string
+  /** Finished exams available for review, newest first. */
+  history: SessionSummary[]
+  onReview: (sessionId: string) => void
+  reviewError?: string
 }
 
 const DOMAIN_ORDER: Domain[] = [
@@ -20,7 +30,26 @@ const DOMAIN_ORDER: Domain[] = [
 
 const DIFFICULTIES: Difficulty[] = ['easy', 'medium', 'hard']
 
-export function Home({ onStart, starting, startError }: HomeProps) {
+/** Formats a finished exam's date as "16 Sep, 14:05". */
+function formatExamDate(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+export function Home({
+  onStart,
+  starting,
+  startError,
+  history,
+  onReview,
+  reviewError,
+}: HomeProps) {
   const [questions, setQuestions] = useState<QuestionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -193,6 +222,46 @@ export function Home({ onStart, starting, startError }: HomeProps) {
           </div>
         ))}
       </section>
+
+      {history.length > 0 && (
+        <section className="history" aria-labelledby="history-head">
+          <div className="history-head">
+            <h3 id="history-head">Past exams</h3>
+            <span className="muted">
+              {history.length} kept · marks as they were scored at the time
+            </span>
+          </div>
+          {reviewError && <p className="error">{reviewError}</p>}
+          <ul className="history-list">
+            {history.map((s) => {
+              const pct = s.max > 0 ? Math.round((s.earned / s.max) * 100) : 0
+              return (
+                <li key={s.id}>
+                  <button
+                    className="history-row"
+                    onClick={() => onReview(s.id)}
+                    aria-label={`Review the exam finished on ${formatExamDate(s.endedAt)}, scored ${pct} percent`}
+                  >
+                    <span className={`history-verdict ${s.passed ? 'pass' : 'fail'}`}>
+                      {s.passed ? 'Pass' : 'Fail'}
+                    </span>
+                    <span className="history-score">{pct}%</span>
+                    <span className="history-meta">
+                      <span className="history-date">{formatExamDate(s.endedAt)}</span>
+                      <span className="muted">
+                        {s.earned}/{s.max} points · {s.totalQuestions} tasks
+                      </span>
+                    </span>
+                    <span className="history-go" aria-hidden="true">
+                      Review →
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
 
       <section className="bank">
         <div className="bank-head">

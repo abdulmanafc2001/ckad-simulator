@@ -9,7 +9,7 @@ import (
 
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store"
 	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/dto"
-	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/memory"
+	"github.com/abdulmanafc2001/ckad-simulator/backend/internal/store/storeerr"
 	"github.com/gin-gonic/gin"
 )
 
@@ -81,6 +81,46 @@ func (h *Handler) GetSession(c *gin.Context) {
 	c.JSON(http.StatusOK, sess)
 }
 
+// ListSessions answers the question the app asks on load: is there an exam
+// to resume, and which finished exams can be reviewed? Both live in one
+// response so a page load costs a single request.
+func (h *Handler) ListSessions(c *gin.Context) {
+	res := dto.SessionsResponse{History: []dto.SessionSummary{}}
+
+	if active, err := h.svc.ActiveSession(); err == nil {
+		res.Active = active
+	} else if !errors.Is(err, storeerr.ErrNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	history, err := h.svc.ListSessionSummaries()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if history != nil {
+		res.History = history
+	}
+
+	c.JSON(http.StatusOK, res)
+}
+
+// SessionResults returns the stored results of a finished session, so a
+// past exam can be reviewed without re-grading it.
+func (h *Handler) SessionResults(c *gin.Context) {
+	res, err := h.svc.SessionResults(c.Param("id"))
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, storeerr.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		c.JSON(status, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
 // SubmitAnswer grades an answer for a question within a session.
 func (h *Handler) SubmitAnswer(c *gin.Context) {
 	var req dto.SubmitAnswerRequest
@@ -95,7 +135,7 @@ func (h *Handler) SubmitAnswer(c *gin.Context) {
 	res, err := h.svc.SubmitAnswer(c.Request.Context(), c.Param("id"), req)
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, memory.ErrNotFound) {
+		if errors.Is(err, storeerr.ErrNotFound) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -109,7 +149,7 @@ func (h *Handler) EndSession(c *gin.Context) {
 	res, err := h.svc.EndSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, memory.ErrNotFound) {
+		if errors.Is(err, storeerr.ErrNotFound) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})
@@ -188,7 +228,7 @@ func (h *Handler) CleanupSession(c *gin.Context) {
 	logs, err := h.svc.CleanupSession(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, memory.ErrNotFound) {
+		if errors.Is(err, storeerr.ErrNotFound) {
 			status = http.StatusNotFound
 		}
 		c.JSON(status, gin.H{"error": err.Error()})

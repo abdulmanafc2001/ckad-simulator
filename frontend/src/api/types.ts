@@ -77,6 +77,26 @@ export interface ClusterStatus {
   detail: string
 }
 
+/** One finished exam, as listed in the history. */
+export interface SessionSummary {
+  id: string
+  startedAt: string
+  endedAt: string
+  earned: number
+  max: number
+  totalQuestions: number
+  passed: boolean
+}
+
+/**
+ * What the app asks for on load: the exam to resume, if one is still
+ * running, plus the finished exams available for review.
+ */
+export interface SessionsResponse {
+  active: StartSessionResponse | null
+  history: SessionSummary[]
+}
+
 export interface StartSessionRequest {
   questionIds?: string[]
 }

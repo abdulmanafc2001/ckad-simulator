@@ -8,6 +8,7 @@ import type {
   ExecResponse,
   Question,
   QuestionSummary,
+  SessionsResponse,
   StartSessionRequest,
   StartSessionResponse,
   SubmitAnswerRequest,
@@ -83,6 +84,19 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(body),
     })
+  },
+
+  /**
+   * The exam to resume (if one is in progress) plus the finished exams
+   * available for review. Asked for once on load.
+   */
+  sessions(): Promise<SessionsResponse> {
+    return request('/sessions')
+  },
+
+  /** Stored results of a finished exam — nothing is re-graded. */
+  sessionResults(sessionId: string): Promise<EndSessionResponse> {
+    return request(`/sessions/${encodeURIComponent(sessionId)}/results`)
   },
 
   submitAnswer(

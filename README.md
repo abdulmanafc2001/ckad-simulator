@@ -44,6 +44,8 @@ graph LR
 - 📚 **164 questions** from [dgkanatsios/ckad-exercises](https://github.com/dgkanatsios/ckad-exercises), [jamesbuckett/ckad-questions](https://github.com/jamesbuckett/ckad-questions), [ibrahimatay/CKAD-Exercises](https://github.com/ibrahimatay/CKAD-Exercises), [bbachi/CKAD-Practice-Questions](https://github.com/bbachi/CKAD-Practice-Questions), [aleti-pavan/ckad-practice-questions](https://github.com/aleti-pavan/ckad-practice-questions) and [tariqm/CKAD-2026](https://github.com/tariqm/CKAD-2026) across all CKAD domains and three difficulty levels
 - 🔍 **Review mode** — after the exam, see exactly which checks failed and why,
   with reference solutions
+- 💾 **Persistent sessions** — an exam in progress survives a restart, and past
+  exams stay on the home screen for review
 
 ## 🚀 Quickstart
 
@@ -83,14 +85,31 @@ Sources: [dgkanatsios/ckad-exercises](https://github.com/dgkanatsios/ckad-exerci
 | Backend | Go + Gin | REST API, session/exam logic, exec-based checker |
 | Grading engine | `kubectl` + JSONPath | Weighted checks, invert rules, regex/substring expectations |
 | Frontend | React 19 + Vite + xterm.js | Exam UI, terminal, editor emulation, results review |
-| State | In-memory | Swap for Redis/Postgres to scale horizontally |
+| State | SQLite (pure Go, no cgo) | Sessions & attempts persisted; the question bank stays in the binary |
+
+### Session storage
+
+Exams are written to `~/.ckad-simulator/sessions.db`, so an exam in progress
+survives a backend restart — reload the page and it picks up where it left
+off, with the original deadline — and the last 20 finished exams stay on the
+home screen for review.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `CKAD_DB` | `~/.ckad-simulator/sessions.db` | Path to the session database |
+| `CKAD_DB=off` | — | Keep everything in memory; nothing is written to disk |
+| `PORT` | `8080` | API port |
+| `KUBECTL_BIN` | `kubectl` | Path to the kubectl binary |
+
+Starting a new exam clears any unfinished session and resets the cluster, but
+leaves finished exams alone. If the database cannot be opened the server logs
+the reason and falls back to memory rather than refusing to start.
 
 ## 🤝 Contributing
 
 Issues and PRs are welcome! Good first contributions:
 
 - New questions in `backend/cmd/server/seed.go` (sourced from [dgkanatsios/ckad-exercises](https://github.com/dgkanatsios/ckad-exercises))
-- A persistent session store
 - More locales / UI polish
 
 ## 📄 License
